@@ -24,7 +24,7 @@ for FOLD in 0 1 2 3 4; do
     --num_workers 0 \
     --k_fold 5 \
     --fold ${FOLD} \
-    --pretrained_model logs/ckpts/GLAM/2026_01_30_20_01_13_mydata_kfold_wbce_fold0/last.ckpt \
+    --pretrained_model "${CKPT_PATH}" \
     --rsna_csv_path "${CUSTOM_CSV}" \
     --rsna_img_root "${IMG_ROOT}" \
     --rsna_path_pattern "${PATH_PATTERN}" \
