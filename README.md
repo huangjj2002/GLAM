@@ -14,4 +14,4 @@
   得到预训练模型后进行使用tools下的generate_implant以及generate_unimplant对EMBED的csv文件进行处理，然后使用embed脚本对embed数据进行处理
 
 4. **运行命令**  
-   对模型预训练参考原项目，使用EMBED数据集进行下游训练用以进行cancer分类参考run_5fold_train.sh
+   对模型预训练参考原项目，使用EMBED数据集进行下游训练用以进行cancer分类参考run_5fold_train.sh，在训练前要修改dataset\constants_val.py中的路径信息
