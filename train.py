@@ -168,7 +168,7 @@ def eval(args, model, datamodule):
         deterministic=args.deterministic,
         inference_mode=True,
     )
-
+    print("EVAL batch_size =", args.batch_size)
     trainer.test(model, datamodule=datamodule)
 
 
@@ -193,7 +193,8 @@ def cli_main():
     args.deterministic = False
 
     if args.eval:
-        args.batch_size = 32
+        if "--batch_size" not in sys.argv:
+            args.batch_size = 32
         args.data_pct = 1.0
         args.max_epoch = 1
         args.accumulate_grad_batches = 1

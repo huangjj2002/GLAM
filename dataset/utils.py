@@ -119,6 +119,8 @@ def get_gray_imgs(
 
 def get_imgs(img_path, scale, transform=None, multiscale=False, return_orig_img=False):
     x = cv2.imread(str(img_path), 0)
+    if x is None:
+        raise FileNotFoundError(f"[get_imgs] cannot read image: {img_path}")
     # tranform images
     x = resize_img(x, scale)
     orig_img = Image.fromarray(x).convert("RGB")

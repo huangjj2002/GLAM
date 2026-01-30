@@ -315,7 +315,7 @@ class RSNAMammo(torch.utils.data.Dataset):
     ):
         # Keep official behavior: map 'test' to 'valid' for RSNA default CSVs.
         # For custom CSVs (e.g., EMBED-derived), we allow an explicit 'test' split when split_col exists.
-        if csv_path is None and split == "test":
+        if csv_path is None and split == "test" and (not k_fold or k_fold == 0):
             split = "valid"
         assert split in ["train", "valid", "test"]
 
@@ -337,14 +337,29 @@ class RSNAMammo(torch.utils.data.Dataset):
         # ---------------------------
         if csv_path is None:
             # Official RSNA behavior
-            if split == "train":
-                self.df = pd.read_csv(RSNA_MAMMO_TRAIN_CSV)
+            # Keep original behavior when k_fold==0:
+            #   - train uses RSNA_MAMMO_TRAIN_CSV
+            #   - valid/test use RSNA_MAMMO_TEST_CSV (and 'test' is mapped to 'valid' above)
+            # When k_fold>0, train/valid must come from the SAME pool (train CSV),
+            # and test should come from the official test CSV.
+            if k_fold and k_fold > 0:
+                if split in ["train", "valid"]:
+                    self.df = pd.read_csv(RSNA_MAMMO_TRAIN_CSV)
+                else:  # split == "test"
+                    if balanced_test:
+                        warnings.warn(
+                            "Balanced test set is not supported for RSNA Mammography dataset, move to original test set"
+                        )
+                    self.df = pd.read_csv(RSNA_MAMMO_TEST_CSV)
             else:
-                if balanced_test:
-                    warnings.warn(
-                        "Balanced test set is not supported for RSNA Mammography dataset, move to original test set"
-                    )
-                self.df = pd.read_csv(RSNA_MAMMO_TEST_CSV)
+                if split == "train":
+                    self.df = pd.read_csv(RSNA_MAMMO_TRAIN_CSV)
+                else:
+                    if balanced_test:
+                        warnings.warn(
+                            "Balanced test set is not supported for RSNA Mammography dataset, move to original test set"
+                        )
+                    self.df = pd.read_csv(RSNA_MAMMO_TEST_CSV)
             _patient_col = "patient_id"
             _image_col = "image_id"
             _label_col = "cancer"
@@ -362,11 +377,19 @@ class RSNAMammo(torch.utils.data.Dataset):
             _image_col = image_col if image_col in self.df.columns else "image_id"
 
             # Optional split filtering (e.g., split in {'training','test'})
+            # Per your requirement:
+            #   - when k_fold==0: keep behavior close to original project (do not force training/valid filtering);
+            #     still allow explicit test filtering if user requests split="test"
+            #   - when k_fold>0: train/valid are drawn from 'training', and test is drawn from 'test'
             if split_col in self.df.columns:
-                if split in ["train", "valid"]:
-                    self.df = self.df[self.df[split_col] == train_split_value]
-                elif split == "test":
-                    self.df = self.df[self.df[split_col] == test_split_value]
+                if k_fold and k_fold > 0:
+                    if split in ["train", "valid"]:
+                        self.df = self.df[self.df[split_col] == train_split_value]
+                    elif split == "test":
+                        self.df = self.df[self.df[split_col] == test_split_value]
+                else:
+                    if split == "test":
+                        self.df = self.df[self.df[split_col] == test_split_value]
 
             _data_root = img_root if img_root is not None else RSNA_MAMMO_JPEG_DIR
             _path_pattern = path_pattern if path_pattern is not None else "{pid}/{iid}"
@@ -375,6 +398,8 @@ class RSNAMammo(torch.utils.data.Dataset):
         # Patient-level K-fold (RSNA pipeline only)
         # ---------------------------
         if k_fold and k_fold > 0 and split in ["train", "valid"]:
+            assert k_fold >= 2, "k_fold must be >= 2 for KFold"
+            assert 0 <= fold < k_fold, f"fold must be in [0, {k_fold-1}]"
             from sklearn.model_selection import KFold
 
             uniq_pids = self.df[_patient_col].astype(str).unique()
@@ -399,9 +424,9 @@ class RSNAMammo(torch.utils.data.Dataset):
         if data_pct != 1.0 and split == "train":
             random.seed(42)
             self.df = self.df.sample(frac=data_pct)
-        if less_train_neg > 0:
-            df_neg = self.df[self.df["cancer"] == 0]
-            df_pos = self.df[self.df["cancer"] == 1]
+        if less_train_neg > 0 and _label_col in self.df.columns:
+            df_neg = self.df[self.df[_label_col] == 0]
+            df_pos = self.df[self.df[_label_col] == 1]
             df_neg = df_neg.sample(frac=less_train_neg)
             self.df = pd.concat([df_neg, df_pos])
 
