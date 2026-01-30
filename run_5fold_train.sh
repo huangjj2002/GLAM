@@ -30,11 +30,10 @@ do
     --emb_dim 512 \
     --img_size 336 \
     --crop_size 336 \
-    --num_workers 8 \
+    --num_workers 0 \
     --img_cls_ft \
     --num_classes 1 \
-    --binary_loss \
-    --weighted_binary \
-    --pretrained_model "${PRETRAINED_CKPT}"
+    --weighted_binary 
+    #--pretrained_model "${PRETRAINED_CKPT}"
   echo "Finished FOLD = ${FOLD}"
 done
