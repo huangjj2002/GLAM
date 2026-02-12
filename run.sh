@@ -26,7 +26,8 @@ BASE_EXP_NAME="5fold_train_validation_test"
 
 LEARNING_RATE=1e-4
 MAX_EPOCHS=5
-WARM_UP=10
+#最大训练轮数
+WARM_UP=102
 IMG_SIZE=336
 CROP_SIZE=336
 LLM_TYPE="bert"
