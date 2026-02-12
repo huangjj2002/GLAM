@@ -67,6 +67,11 @@ def train(args, model, datamodule):
     os.makedirs(ckpt_dir, exist_ok=True)
     monitor = "val_loss"
     mode = "min"
+    if args.img_cls_ft and args.rsna_mammo and (not args.multi_label):
+        # For RSNA binary fine-tuning, AUROC is the primary metric.
+        monitor = "val_AUROC"
+        mode = "max"
+    print(f"### Checkpoint monitor: {monitor} ({mode})")
     callbacks = [
         LearningRateMonitor(logging_interval="step"),
     ]
@@ -113,6 +118,14 @@ def train(args, model, datamodule):
         )
         args.devices = num_available_gpus
     print(f"### Using {args.strategy} Strategy with {args.devices} GPUs")
+    trainer_limit_kwargs = {"max_steps": args.max_steps}
+    if args.train_by_epoch:
+        trainer_limit_kwargs = {"max_epochs": args.max_epochs, "max_steps": -1}
+        print(
+            f"### Training by epochs: max_epochs={args.max_epochs} (max_steps disabled)"
+        )
+    else:
+        print(f"### Training by steps: max_steps={args.max_steps}")
     trainer = Trainer(
         accelerator=args.accelerator,
         strategy=args.strategy,
@@ -121,11 +134,11 @@ def train(args, model, datamodule):
         callbacks=callbacks,
         logger=wandb_logger,
         fast_dev_run=args.dev,
-        max_steps=args.max_steps,
         deterministic=args.deterministic,
         accumulate_grad_batches=args.accumulate_grad_batches,
         check_val_every_n_epoch=int(1 / args.data_pct),
         enable_progress_bar=(not args.no_progress_bar),
+        **trainer_limit_kwargs,
     )
 
     model.training_steps = model.num_training_steps(trainer, datamodule)
@@ -188,6 +201,11 @@ def cli_main():
     parser.add_argument("--pretrained_model", type=str, default=None)
     parser.add_argument("--resume_ckpt", type=str, default=None)
     parser.add_argument("--no_progress_bar", action="store_true")
+    parser.add_argument(
+        "--train_by_epoch",
+        action="store_true",
+        help="Use max_epochs to control training length (disables max_steps).",
+    )
     parser.add_argument("--embed", action="store_true")
     parser.add_argument("--vindr", action="store_true")
     parser.add_argument("--rsna_mammo", action="store_true")

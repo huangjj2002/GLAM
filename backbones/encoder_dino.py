@@ -110,6 +110,12 @@ class HFDinoV2Wrapper(nn.Module):
         self.norm = getattr(self.model, "layernorm", None)
 
     def forward(self, x, is_training=True):
+        # HuggingFace models are loaded in eval mode by default.
+        # Explicitly switch mode so fine-tuning behaves as expected.
+        if is_training:
+            self.model.train()
+        else:
+            self.model.eval()
         outputs = self.model(pixel_values=x, return_dict=True)
         x_prenorm = outputs.last_hidden_state
         return {

@@ -946,13 +946,16 @@ class GLAM(LightningModule):
             "train_loss": loss,
             "train_loss_c": loss_c,
             "train_acc1": acc1,
-            "train_acc5": acc5,
         }
+        if not self.hparams.weighted_binary:
+            log["train_acc5"] = acc5
         if ex_loss_dict is not None:
             for k, v in ex_loss_dict.items():
                 log[f"train_{k}"] = v
         self.log_dict(
             log,
+            on_step=False,
+            on_epoch=True,
             batch_size=self.hparams.batch_size,
             sync_dist=True,
             prog_bar=True,
@@ -973,19 +976,35 @@ class GLAM(LightningModule):
             "val_loss": loss,
             "val_loss_c": loss_c,
             "val_acc1": acc1,
-            "val_acc5": acc5,
         }
+        if not self.hparams.weighted_binary:
+            log["val_acc5"] = acc5
         if ex_loss_dict is not None:
             for k, v in ex_loss_dict.items():
                 log[f"train_{k}"] = v
         self.log_dict(
             log,
+            on_step=False,
+            on_epoch=True,
             batch_size=self.hparams.batch_size,
             sync_dist=True,
             prog_bar=True,
             rank_zero_only=True,
         )
         return loss
+
+    @staticmethod
+    def _to_float(x):
+        if x is None:
+            return None
+        if isinstance(x, torch.Tensor):
+            if x.numel() == 0:
+                return None
+            return float(x.detach().cpu().item())
+        try:
+            return float(x)
+        except Exception:
+            return None
 
     def test_step(self, batch, batch_idx):
 
@@ -1000,8 +1019,9 @@ class GLAM(LightningModule):
             "test_loss": loss,
             "test_loss_c": loss_c,
             "test_acc1": acc1,
-            "test_auc": auc,
         }
+        if not self.hparams.weighted_binary:
+            log["test_auc"] = auc
         if ex_loss_dict is not None:
             for k, v in ex_loss_dict.items():
                 log[f"train_{k}"] = v
@@ -1015,6 +1035,26 @@ class GLAM(LightningModule):
         return loss
 
     def on_train_epoch_end(self) -> None:
+        # Keep concise per-epoch training logs when progress bar is disabled.
+        if self.global_rank == 0 and self.trainer is not None:
+            metrics = self.trainer.callback_metrics
+            train_loss = self._to_float(metrics.get("train_loss"))
+            train_acc1 = self._to_float(metrics.get("train_acc1"))
+            train_acc5 = (
+                None
+                if self.hparams.weighted_binary
+                else self._to_float(metrics.get("train_acc5"))
+            )
+            fold = getattr(self.hparams, "fold", "NA")
+            msg = f"\n### Fold {fold} | Epoch {self.current_epoch}"
+            if train_loss is not None:
+                msg += f" | train_loss: {train_loss:.4f}"
+            if train_acc1 is not None:
+                msg += f" | train_acc1: {train_acc1:.4f}"
+            if train_acc5 is not None:
+                msg += f" | train_acc5: {train_acc5:.4f}"
+            print(msg)
+
         if (
             self.hparams.multi_label
             and self.all_scores_train is not None

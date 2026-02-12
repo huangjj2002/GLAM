@@ -25,7 +25,7 @@ BASE_EXP_NAME="5fold_train_validation_test"
 
 
 LEARNING_RATE=1e-4
-MAX_STEPS=60
+MAX_EPOCHS=5
 WARM_UP=10
 IMG_SIZE=336
 CROP_SIZE=336
@@ -72,9 +72,10 @@ for FOLD in 0 1 2 3 4; do
   echo "---- Training fold ${FOLD} (${EXP_NAME}) ----"
   TRAIN_LOG="${RESULTS_DIR}/fold${FOLD}_train.log"
 
-  python train.py \
+  python -u train.py \
     --experiment_name "${EXP_NAME}" \
     --no_progress_bar \
+    --train_by_epoch \
     --rsna_mammo \
     --img_cls_ft \
     --llm_type "${LLM_TYPE}" \
@@ -87,7 +88,7 @@ for FOLD in 0 1 2 3 4; do
     --batch_size "${BATCH_SIZE}" \
     --num_workers "${NUM_WORKERS}" \
     --learning_rate "${LEARNING_RATE}" \
-    --max_steps "${MAX_STEPS}" \
+    --max_epochs "${MAX_EPOCHS}" \
     --warm_up "${WARM_UP}" \
     --img_size "${IMG_SIZE}" \
     --crop_size "${CROP_SIZE}" \
@@ -122,7 +123,8 @@ for FOLD in 0 1 2 3 4; do
   BEST_CKPT_YAML="${CKPT_DIR}/best_ckpts.yaml"
   CKPT_PATH=""
   if [[ -f "${BEST_CKPT_YAML}" && -s "${BEST_CKPT_YAML}" ]]; then
-    CKPT_PATH="$(awk -F': ' 'NR==1{best=$2;path=$1} $2<best{best=$2;path=$1} END{print path}' "${BEST_CKPT_YAML}")"
+    # best_ckpts.yaml now stores val_AUROC, so larger is better.
+    CKPT_PATH="$(awk -F': ' 'NR==1{best=$2;path=$1} $2>best{best=$2;path=$1} END{print path}' "${BEST_CKPT_YAML}")"
   fi
   if [[ -z "${CKPT_PATH}" || ! -f "${CKPT_PATH}" ]]; then
     CKPT_PATH="${CKPT_DIR}/last.ckpt"
@@ -136,7 +138,7 @@ for FOLD in 0 1 2 3 4; do
   echo "CKPT: ${CKPT_PATH}"
   TEST_LOG="${RESULTS_DIR}/fold${FOLD}_test.log"
 
-  python train.py \
+  python -u train.py \
     --eval \
     --no_progress_bar \
     --rsna_mammo \
