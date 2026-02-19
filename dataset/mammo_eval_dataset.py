@@ -586,7 +586,7 @@ if __name__ == "__main__":
         ]
     )
     dataset = VinDr(
-        "data\csv\breast-level_annotations.csv",
+        "data/csv/breast-level_annotations.csv",
         transform=transform,
         binary=False,
         test=False,

@@ -697,7 +697,7 @@ class EmbedPretrainingDataset(data.Dataset):
                 ]
             else:
                 # split sentences
-                splitter = re.compile("[0-9]+\.")
+                splitter = re.compile(r"[0-9]+\.")
                 captions = splitter.split(captions)
                 captions = [point.split(".") for point in captions]
                 captions = [sent for point in captions for sent in point]
