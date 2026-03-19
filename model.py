@@ -1334,12 +1334,15 @@ class GLAM(LightningModule):
             pF1 = 0.0
 
         if self.hparams.save_prediction:
-            # Save predictions to disk
-            save_dir = self.hparams.pretrained_model.replace("last.ckpt", "predictions")
+            # Save predictions to disk. Works for both "last.ckpt" and arbitrary best ckpt filenames.
+            ckpt_path = self.hparams.pretrained_model
+            ckpt_dir = os.path.dirname(ckpt_path) if ckpt_path is not None else "."
+            save_subdir = "predictions"
             if self.hparams.pred_density:
-                save_dir = save_dir.replace("predictions", "predictions_density")
+                save_subdir = "predictions_density"
             if self.hparams.vindr:
-                save_dir = save_dir.replace("predictions", "predictions_vindr")
+                save_subdir = "predictions_vindr"
+            save_dir = os.path.join(ckpt_dir, save_subdir)
             os.makedirs(save_dir, exist_ok=True)
             np.save(os.path.join(save_dir, "labels.npy"), self.all_labels)
             np.save(os.path.join(save_dir, "scores.npy"), self.all_scores)
@@ -1452,15 +1455,37 @@ class GLAM(LightningModule):
                 betas=(self.hparams.momentum, 0.999),
                 weight_decay=self.hparams.weight_decay,
             )
+        train_by_epoch = bool(getattr(self.hparams, "train_by_epoch", False))
+        if train_by_epoch:
+            first_cycle_steps = max(1, int(self.hparams.max_epochs))
+            warmup_steps = max(0, int(self.hparams.warm_up))
+            if first_cycle_steps == 1:
+                warmup_steps = 0
+            else:
+                warmup_steps = min(warmup_steps, first_cycle_steps - 1)
+            scheduler_interval = "epoch"
+        else:
+            first_cycle_steps = max(1, int(self.hparams.max_steps))
+            warmup_steps = max(0, int(self.hparams.warm_up))
+            if first_cycle_steps == 1:
+                warmup_steps = 0
+            else:
+                warmup_steps = min(warmup_steps, first_cycle_steps - 1)
+            scheduler_interval = "step"
+
         lr_scheduler = CosineAnnealingWarmupRestarts(
             optimizer,
-            first_cycle_steps=self.hparams.max_steps,
+            first_cycle_steps=first_cycle_steps,
             cycle_mult=1.0,
             max_lr=self.hparams.learning_rate,
             min_lr=self.hparams.min_lr,
-            warmup_steps=self.hparams.warm_up,
+            warmup_steps=warmup_steps,
         )
-        scheduler = {"scheduler": lr_scheduler, "interval": "step", "frequency": 1}
+        scheduler = {
+            "scheduler": lr_scheduler,
+            "interval": scheduler_interval,
+            "frequency": 1,
+        }
         return {"optimizer": optimizer, "lr_scheduler": scheduler}
 
     @staticmethod
@@ -1503,7 +1528,12 @@ class GLAM(LightningModule):
         parser.add_argument("--precision", type=str, default="32")
         parser.add_argument("--dev", action="store_true")
         parser.add_argument("--grad_ckpt", action="store_true")
-        parser.add_argument("--warm_up", type=int, default=16000)
+        parser.add_argument(
+            "--warm_up",
+            type=int,
+            default=16000,
+            help="Warm-up duration. Unit is epochs when --train_by_epoch is enabled, otherwise steps.",
+        )
         parser.add_argument("--balance_training", action="store_true")
         parser.add_argument("--balance_ratio", type=int, default=-1)
         parser.add_argument("--multi_label", action="store_true")

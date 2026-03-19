@@ -1,77 +1,117 @@
-
+#!/usr/bin/env bash
 set -euo pipefail
-export WANDB_MODE="offline"
-GPU_ID=0 #用来指定使用的GPU编号
-export CUDA_VISIBLE_DEVICES="${GPU_ID}"
+
+# =========================
+# User-tunable parameters
+# =========================
+GPU_ID=0
+MAX_EPOCHS=1
+WARM_UP=0
 
 NUM_GPUS=1
 BATCH_SIZE=8
 NUM_WORKERS=0
 PRECISION="32"
-
-
-IMG_ENCODER="facebook/dinov2-base"
-
-
-CSV_PATH="/mnt/f/data/train_with_test_data.csv"
-#指定数据的csv文件
-
-IMG_ROOT="/mnt/f/data/images_png"
-#指定png文件的根目录
-PATH_PATTERN="{pid}/{iid}"
-
-
-BASE_EXP_NAME="5fold_train_validation_test"
-
-
 LEARNING_RATE=1e-4
-MAX_EPOCHS=5
-#最大训练轮数
-WARM_UP=102
+
+# Keep these aligned with pretrain_model checkpoint hyper-parameters.
+IMG_ENCODER="dinov2_vitb14_reg"
+EMB_DIM=512
+USE_LINEAR_PROJ=1
+LLM_TYPE="bert"
 IMG_SIZE=336
 CROP_SIZE=336
-LLM_TYPE="bert"
 
+CSV_PATH="/mnt/f/data/train_with_test_data.csv"
+IMG_ROOT="/mnt/f/data/images_png"
+PATH_PATTERN="{pid}/{iid}"
+
+PATIENT_COL="patient_id"
+IMAGE_COL="image_id"
+LABEL_COL="cancer"
+SPLIT_COL="split"
+COHORT_COL="cohert_num"
+TRAIN_SPLIT_VALUE="training"
+TEST_SPLIT_VALUE="test"
+
+PRETRAINED_ENCODER="$(cd "$(dirname "$0")" && pwd)/pretrain_model/last.ckpt"
+NUM_FOLDS=2
+BASE_EXP_NAME="glam_kfold_ft"
+
+PRED_THRESHOLD=0.5
+FULL_EVAL_DISABLE_SPLIT_COL="__all_splits__"
+
+# Directory to store all outputs of this run (logs/report/csv).
+# Relative paths are resolved against ROOT_DIR.
+OUTPUT_DIR="outputs"
+
+# =========================
+# Fixed runtime setup
+# =========================
+export WANDB_MODE="offline"
+export CUDA_VISIBLE_DEVICES="${GPU_ID}"
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "${ROOT_DIR}"
-RUN_TAG="$(date +%Y%m%d_%H%M%S)"
-RESULTS_DIR="${ROOT_DIR}/logs/results/${BASE_EXP_NAME}_${RUN_TAG}"
-mkdir -p "${RESULTS_DIR}"
-SUMMARY_CSV="${ROOT_DIR}/results_summary_dinov2_${RUN_TAG}.csv"
 
-echo "Root dir       : ${ROOT_DIR}"
-echo "CSV_PATH       : ${CSV_PATH}"
-echo "IMG_ROOT       : ${IMG_ROOT}"
-echo "PATH_PATTERN   : ${PATH_PATTERN}"
-echo "IMG_ENCODER    : ${IMG_ENCODER}"
-echo "LLM_TYPE       : ${LLM_TYPE}"
-echo "WANDB_MODE     : ${WANDB_MODE}"
-echo "GPU_ID         : ${GPU_ID}"
-echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES}"
-echo "RESULTS_DIR    : ${RESULTS_DIR}"
+RUN_TAG="$(date +%Y%m%d_%H%M%S)"
+
+if [[ "${OUTPUT_DIR}" = /* ]]; then
+  OUTPUT_ROOT="${OUTPUT_DIR}"
+else
+  OUTPUT_ROOT="${ROOT_DIR}/${OUTPUT_DIR}"
+fi
+RUN_OUTPUT_DIR="${OUTPUT_ROOT}/${BASE_EXP_NAME}_${RUN_TAG}"
+RESULTS_DIR="${RUN_OUTPUT_DIR}/logs"
+PER_MODEL_CSV_DIR="${RUN_OUTPUT_DIR}/per_model_predictions"
+FULL_REPORT_PATH="${RUN_OUTPUT_DIR}/full_eval_report.txt"
+FULL_PRED_CSV="${RUN_OUTPUT_DIR}/ensemble_predictions.csv"
+mkdir -p "${RESULTS_DIR}" "${PER_MODEL_CSV_DIR}"
+
+LINEAR_PROJ_FLAG=()
+if [[ "${USE_LINEAR_PROJ}" == "1" ]]; then
+  LINEAR_PROJ_FLAG+=(--linear_proj)
+fi
+
+echo "Root dir                : ${ROOT_DIR}"
+echo "GPU_ID                  : ${GPU_ID}"
+echo "CUDA_VISIBLE_DEVICES    : ${CUDA_VISIBLE_DEVICES}"
+echo "CSV_PATH                : ${CSV_PATH}"
+echo "IMG_ROOT                : ${IMG_ROOT}"
+echo "PATH_PATTERN            : ${PATH_PATTERN}"
+echo "PRETRAINED_ENCODER      : ${PRETRAINED_ENCODER}"
+echo "IMG_ENCODER             : ${IMG_ENCODER}"
+echo "EMB_DIM                 : ${EMB_DIM}"
+echo "USE_LINEAR_PROJ         : ${USE_LINEAR_PROJ}"
+echo "MAX_EPOCHS              : ${MAX_EPOCHS}"
+echo "WARM_UP (epochs)        : ${WARM_UP}"
+echo "RUN_OUTPUT_DIR          : ${RUN_OUTPUT_DIR}"
+echo "RESULTS_DIR             : ${RESULTS_DIR}"
+echo "FULL_REPORT_PATH        : ${FULL_REPORT_PATH}"
+echo "FULL_PRED_CSV           : ${FULL_PRED_CSV}"
+echo "PER_MODEL_CSV_DIR       : ${PER_MODEL_CSV_DIR}"
 
 if [[ ! -f "${CSV_PATH}" ]]; then
   echo "[ERROR] CSV file not found: ${CSV_PATH}"
   exit 1
 fi
-
 if [[ ! -d "${IMG_ROOT}" ]]; then
   echo "[ERROR] IMG_ROOT directory not found: ${IMG_ROOT}"
-  echo "Please set IMG_ROOT to your image root, e.g.:"
-  echo "  IMG_ROOT=/path/to/images bash run_dinov2_rsna_5fold.sh"
+  exit 1
+fi
+if [[ ! -f "${PRETRAINED_ENCODER}" ]]; then
+  echo "[ERROR] PRETRAINED_ENCODER checkpoint not found: ${PRETRAINED_ENCODER}"
   exit 1
 fi
 
 echo "=============================="
-echo "Stage 1: 5-fold training"
-echo "split=training used for train/val pool"
+echo "Stage 1/3: ${NUM_FOLDS}-fold training"
 echo "=============================="
 
-for FOLD in 0 1 2 3 4; do
-  EXP_NAME="${BASE_EXP_NAME}_fold${FOLD}"
-  echo "---- Training fold ${FOLD} (${EXP_NAME}) ----"
+for ((FOLD=0; FOLD<NUM_FOLDS; FOLD++)); do
+  EXP_NAME="${BASE_EXP_NAME}_${RUN_TAG}_fold${FOLD}"
   TRAIN_LOG="${RESULTS_DIR}/fold${FOLD}_train.log"
+  echo "---- Training fold ${FOLD} (${EXP_NAME}) ----"
 
   python -u train.py \
     --experiment_name "${EXP_NAME}" \
@@ -81,7 +121,10 @@ for FOLD in 0 1 2 3 4; do
     --img_cls_ft \
     --llm_type "${LLM_TYPE}" \
     --img_encoder "${IMG_ENCODER}" \
-    --k_fold 5 \
+    --emb_dim "${EMB_DIM}" \
+    "${LINEAR_PROJ_FLAG[@]}" \
+    --pretrained_encoder "${PRETRAINED_ENCODER}" \
+    --k_fold "${NUM_FOLDS}" \
     --fold "${FOLD}" \
     --devices "${NUM_GPUS}" \
     --strategy auto \
@@ -99,76 +142,96 @@ for FOLD in 0 1 2 3 4; do
     --rsna_csv_path "${CSV_PATH}" \
     --rsna_img_root "${IMG_ROOT}" \
     --rsna_path_pattern "${PATH_PATTERN}" \
-    --rsna_patient_col "patient_id" \
-    --rsna_image_col "image_id" \
-    --rsna_label_col "cancer" \
-    --rsna_split_col "split" \
-    --rsna_train_split_value "training" \
-    --rsna_test_split_value "test" 2>&1 | tee "${TRAIN_LOG}"
+    --rsna_patient_col "${PATIENT_COL}" \
+    --rsna_image_col "${IMAGE_COL}" \
+    --rsna_label_col "${LABEL_COL}" \
+    --rsna_split_col "${SPLIT_COL}" \
+    --rsna_train_split_value "${TRAIN_SPLIT_VALUE}" \
+    --rsna_test_split_value "${TEST_SPLIT_VALUE}" 2>&1 | tee "${TRAIN_LOG}"
 done
 
 echo "=============================="
-echo "Stage 2: per-fold testing on split=test"
+echo "Stage 2/3: Full-data eval with ${NUM_FOLDS} best classifiers"
 echo "=============================="
 
-for FOLD in 0 1 2 3 4; do
-  EXP_NAME="${BASE_EXP_NAME}_fold${FOLD}"
+BEST_CKPTS=()
+for ((FOLD=0; FOLD<NUM_FOLDS; FOLD++)); do
+  EXP_NAME="${BASE_EXP_NAME}_${RUN_TAG}_fold${FOLD}"
   CKPT_DIR="$(ls -dt logs/ckpts/GLAM/*"${EXP_NAME}" 2>/dev/null | head -n 1 || true)"
-
   if [[ -z "${CKPT_DIR}" ]]; then
-    echo "[WARN] No checkpoint dir found for ${EXP_NAME}, skipping."
-    continue
+    echo "[ERROR] No checkpoint dir found for ${EXP_NAME}"
+    exit 1
   fi
-
 
   BEST_CKPT_YAML="${CKPT_DIR}/best_ckpts.yaml"
   CKPT_PATH=""
   if [[ -f "${BEST_CKPT_YAML}" && -s "${BEST_CKPT_YAML}" ]]; then
-    # best_ckpts.yaml now stores val_AUROC, so larger is better.
     CKPT_PATH="$(awk -F': ' 'NR==1{best=$2;path=$1} $2>best{best=$2;path=$1} END{print path}' "${BEST_CKPT_YAML}")"
   fi
   if [[ -z "${CKPT_PATH}" || ! -f "${CKPT_PATH}" ]]; then
     CKPT_PATH="${CKPT_DIR}/last.ckpt"
   fi
   if [[ ! -f "${CKPT_PATH}" ]]; then
-    echo "[WARN] No usable checkpoint found in ${CKPT_DIR}, skipping."
-    continue
+    echo "[ERROR] No usable checkpoint found in ${CKPT_DIR}"
+    exit 1
   fi
+  BEST_CKPTS+=("${CKPT_PATH}")
 
-  echo "---- Testing fold ${FOLD} ----"
+  EVAL_LOG="${RESULTS_DIR}/fold${FOLD}_full_eval.log"
+  echo "---- Full-data eval fold ${FOLD} ----"
   echo "CKPT: ${CKPT_PATH}"
-  TEST_LOG="${RESULTS_DIR}/fold${FOLD}_test.log"
 
   python -u train.py \
     --eval \
     --no_progress_bar \
+    --save_prediction \
     --rsna_mammo \
     --img_cls_ft \
     --llm_type "${LLM_TYPE}" \
     --img_encoder "${IMG_ENCODER}" \
+    --emb_dim "${EMB_DIM}" \
+    "${LINEAR_PROJ_FLAG[@]}" \
     --devices 1 \
     --precision "${PRECISION}" \
     --batch_size "${BATCH_SIZE}" \
     --num_workers "${NUM_WORKERS}" \
-    --k_fold 5 \
-    --fold "${FOLD}" \
+    --k_fold 0 \
+    --fold 0 \
     --pretrained_model "${CKPT_PATH}" \
     --num_classes 1 \
     --weighted_binary \
     --rsna_csv_path "${CSV_PATH}" \
     --rsna_img_root "${IMG_ROOT}" \
     --rsna_path_pattern "${PATH_PATTERN}" \
-    --rsna_patient_col "patient_id" \
-    --rsna_image_col "image_id" \
-    --rsna_label_col "cancer" \
-    --rsna_split_col "split" \
-    --rsna_train_split_value "training" \
-    --rsna_test_split_value "test" 2>&1 | tee "${TEST_LOG}"
+    --rsna_patient_col "${PATIENT_COL}" \
+    --rsna_image_col "${IMAGE_COL}" \
+    --rsna_label_col "${LABEL_COL}" \
+    --rsna_split_col "${FULL_EVAL_DISABLE_SPLIT_COL}" \
+    --rsna_train_split_value "${TRAIN_SPLIT_VALUE}" \
+    --rsna_test_split_value "${TEST_SPLIT_VALUE}" 2>&1 | tee "${EVAL_LOG}"
 done
 
-python "${ROOT_DIR}/summarize_rsna_results.py" \
-  --results_dir "${RESULTS_DIR}" \
-  --output_csv "${SUMMARY_CSV}"
+echo "=============================="
+echo "Stage 3/3: Export per-model CSVs and ensemble CSV"
+echo "=============================="
+
+python -u full_eval_5fold.py \
+  --csv_path "${CSV_PATH}" \
+  --img_root "${IMG_ROOT}" \
+  --path_pattern "${PATH_PATTERN}" \
+  --patient_col "${PATIENT_COL}" \
+  --image_col "${IMAGE_COL}" \
+  --label_col "${LABEL_COL}" \
+  --split_col "${SPLIT_COL}" \
+  --cohort_col "${COHORT_COL}" \
+  --threshold "${PRED_THRESHOLD}" \
+  --ckpt_paths "${BEST_CKPTS[@]}" \
+  --output_report "${FULL_REPORT_PATH}" \
+  --output_csv "${FULL_PRED_CSV}" \
+  --per_model_output_dir "${PER_MODEL_CSV_DIR}"
 
 echo "All done."
-echo "Summary CSV: ${SUMMARY_CSV}"
+echo "Run output dir: ${RUN_OUTPUT_DIR}"
+echo "Report: ${FULL_REPORT_PATH}"
+echo "Ensemble CSV: ${FULL_PRED_CSV}"
+echo "Per-model CSV dir: ${PER_MODEL_CSV_DIR}"
