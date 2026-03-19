@@ -1,16 +1,17 @@
-﻿set -euo pipefail
+#!/usr/bin/env bash
+set -euo pipefail
 WANDB_MODE="offline"
 GPU_ID=0
 # 指定使用的GPU
 RUN_DEVICES=1
 NUM_WORKERS=0
 PRECISION="32"
-CV_FOLDS=5
+CV_FOLDS=2
 IMG_ENCODER="auto"
 DEFAULT_IMG_ENCODER="dinov2_vitb14_reg"
 LLM_TYPE="bert"
 LEARNING_RATE=1e-4
-MAX_EPOCHS=100 #指定运行的epoch数目
+MAX_EPOCHS=2 #指定运行的epoch数目
 WARM_UP_EPOCHS=1
 IMG_SIZE=336
 CROP_SIZE=336
