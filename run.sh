@@ -1,20 +1,22 @@
-#!/usr/bin/env bash
+﻿
 set -euo pipefail
 
-# =========================
-# User-tunable parameters
-# =========================
-GPU_ID=0
-MAX_EPOCHS=1
-WARM_UP=0
 
+GPU_ID=0
+#指定GPU
+MAX_EPOCHS=100
+#指定每一折训练的epoch
+WARM_UP=0
+#指定warm_up的epoch数
 NUM_GPUS=1
-BATCH_SIZE=8
+BATCH_SIZE=16
+#batch_size大小
 NUM_WORKERS=0
 PRECISION="32"
 LEARNING_RATE=1e-4
 
-# Keep these aligned with pretrain_model checkpoint hyper-parameters.
+OUTPUT_DIR="outputs"
+
 IMG_ENCODER="dinov2_vitb14_reg"
 EMB_DIM=512
 USE_LINEAR_PROJ=1
@@ -23,7 +25,9 @@ IMG_SIZE=336
 CROP_SIZE=336
 
 CSV_PATH="/mnt/f/data/train_with_test_data.csv"
+#csv文件地址
 IMG_ROOT="/mnt/f/data/images_png"
+#图片地址
 PATH_PATTERN="{pid}/{iid}"
 
 PATIENT_COL="patient_id"
@@ -35,19 +39,16 @@ TRAIN_SPLIT_VALUE="training"
 TEST_SPLIT_VALUE="test"
 
 PRETRAINED_ENCODER="$(cd "$(dirname "$0")" && pwd)/pretrain_model/last.ckpt"
-NUM_FOLDS=2
+NUM_FOLDS=5
 BASE_EXP_NAME="glam_kfold_ft"
 
 PRED_THRESHOLD=0.5
 FULL_EVAL_DISABLE_SPLIT_COL="__all_splits__"
 
-# Directory to store all outputs of this run (logs/report/csv).
-# Relative paths are resolved against ROOT_DIR.
-OUTPUT_DIR="outputs"
 
-# =========================
-# Fixed runtime setup
-# =========================
+
+
+
 export WANDB_MODE="offline"
 export CUDA_VISIBLE_DEVICES="${GPU_ID}"
 
