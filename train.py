@@ -284,6 +284,7 @@ def cli_main():
         llm_type=args.llm_type,
         train_split=args.train_split,
         valid_split=args.valid_split,
+        test_split=args.test_split,
         train_sub_set=args.train_sub_set,
         structural_cap=args.structural_cap,
         simple_cap=args.simple_cap,
@@ -331,6 +332,31 @@ def cli_main():
         rsna_train_split_value=args.rsna_train_split_value,
         rsna_test_split_value=args.rsna_test_split_value,
     )
+
+    # Optionally define warmup by epochs, then convert to optimizer steps.
+    # This keeps scheduler behavior step-based while exposing a more intuitive epoch knob.
+    if getattr(args, "warm_up_epochs", None) is not None:
+        try:
+            train_num_batches = len(datamodule.train_dataloader())
+            if train_num_batches <= 0:
+                raise RuntimeError("train_dataloader has zero batches.")
+            eff_accum = max(1, int(args.accumulate_grad_batches))
+            steps_per_epoch = int(np.ceil(train_num_batches / eff_accum))
+            warm_up_steps = int(np.ceil(max(0.0, float(args.warm_up_epochs)) * steps_per_epoch))
+            args.warm_up = warm_up_steps
+            print(
+                "### Warmup configured by epochs: "
+                f"warm_up_epochs={args.warm_up_epochs}, "
+                f"train_batches={train_num_batches}, "
+                f"accumulate_grad_batches={eff_accum}, "
+                f"steps_per_epoch={steps_per_epoch}, "
+                f"warm_up_steps={args.warm_up}"
+            )
+        except Exception as e:
+            print(
+                "### [Warning] Failed to convert warm_up_epochs to warm_up steps; "
+                f"using warm_up={args.warm_up}. Error: {e}"
+            )
 
     # ------------------------------------------------------------------
     # Auto-compute pos_weight for weighted BCE (neg/pos) per fold.

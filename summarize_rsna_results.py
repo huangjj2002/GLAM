@@ -43,9 +43,20 @@ def main():
     parser.add_argument("--num_folds", type=int, default=5)
     args = parser.parse_args()
 
-    cols = ["split", "fold", "bacc", "f1", "auc_roc"]
+    cols = [
+        "fold",
+        "train_loss",
+        "train_acc1",
+        "val_bacc",
+        "val_f1",
+        "val_auc_roc",
+        "test_bacc",
+        "test_f1",
+        "test_auc_roc",
+    ]
     rows = []
 
+    train_losses, train_acc1s = [], []
     val_baccs, val_f1s, val_aucs = [], [], []
     test_baccs, test_f1s, test_aucs = [], [], []
 
@@ -53,6 +64,8 @@ def main():
         train_log = read_text(os.path.join(args.results_dir, f"fold{fold}_train.log"))
         test_log = read_text(os.path.join(args.results_dir, f"fold{fold}_test.log"))
 
+        train_loss = last_float(train_log, r"train_loss:\s*([0-9eE+\-.]+|nan)")
+        train_acc1 = last_float(train_log, r"train_acc1:\s*([0-9eE+\-.]+|nan)")
         val_auc = last_float(train_log, r"val_AUROC:\s*([0-9eE+\-.]+|nan)")
         val_bacc = last_float(train_log, r"val_BACC:\s*([0-9eE+\-.]+|nan)")
         val_f1 = last_float(train_log, r"val_F1:\s*([0-9eE+\-.]+|nan)")
@@ -61,6 +74,8 @@ def main():
         test_bacc = last_float(test_log, r"### Balanced Accuracy:\s*([0-9eE+\-.]+|nan)")
         test_f1 = last_float(test_log, r"### F1:\s*([0-9eE+\-.]+|nan)")
 
+        train_losses.append(train_loss)
+        train_acc1s.append(train_acc1)
         val_baccs.append(val_bacc)
         val_f1s.append(val_f1)
         val_aucs.append(val_auc)
@@ -70,57 +85,42 @@ def main():
 
         rows.append(
             {
-                "split": "validation",
                 "fold": fold,
-                "bacc": val_bacc,
-                "f1": val_f1,
-                "auc_roc": val_auc,
-            }
-        )
-        rows.append(
-            {
-                "split": "test",
-                "fold": fold,
-                "bacc": test_bacc,
-                "f1": test_f1,
-                "auc_roc": test_auc,
+                "train_loss": train_loss,
+                "train_acc1": train_acc1,
+                "val_bacc": val_bacc,
+                "val_f1": val_f1,
+                "val_auc_roc": val_auc,
+                "test_bacc": test_bacc,
+                "test_f1": test_f1,
+                "test_auc_roc": test_auc,
             }
         )
 
     rows.append(
         {
-            "split": "validation",
             "fold": "mean",
-            "bacc": nanmean(val_baccs),
-            "f1": nanmean(val_f1s),
-            "auc_roc": nanmean(val_aucs),
+            "train_loss": nanmean(train_losses),
+            "train_acc1": nanmean(train_acc1s),
+            "val_bacc": nanmean(val_baccs),
+            "val_f1": nanmean(val_f1s),
+            "val_auc_roc": nanmean(val_aucs),
+            "test_bacc": nanmean(test_baccs),
+            "test_f1": nanmean(test_f1s),
+            "test_auc_roc": nanmean(test_aucs),
         }
     )
     rows.append(
         {
-            "split": "validation",
             "fold": "std",
-            "bacc": nanstd(val_baccs),
-            "f1": nanstd(val_f1s),
-            "auc_roc": nanstd(val_aucs),
-        }
-    )
-    rows.append(
-        {
-            "split": "test",
-            "fold": "mean",
-            "bacc": nanmean(test_baccs),
-            "f1": nanmean(test_f1s),
-            "auc_roc": nanmean(test_aucs),
-        }
-    )
-    rows.append(
-        {
-            "split": "test",
-            "fold": "std",
-            "bacc": nanstd(test_baccs),
-            "f1": nanstd(test_f1s),
-            "auc_roc": nanstd(test_aucs),
+            "train_loss": nanstd(train_losses),
+            "train_acc1": nanstd(train_acc1s),
+            "val_bacc": nanstd(val_baccs),
+            "val_f1": nanstd(val_f1s),
+            "val_auc_roc": nanstd(val_aucs),
+            "test_bacc": nanstd(test_baccs),
+            "test_f1": nanstd(test_f1s),
+            "test_auc_roc": nanstd(test_aucs),
         }
     )
 

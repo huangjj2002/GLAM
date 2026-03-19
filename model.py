@@ -1226,7 +1226,7 @@ class GLAM(LightningModule):
                 print("### Prediction saved to ", save_path)
                 with open(save_path, "wb") as fp:
                     pickle.dump(pred_dict, fp)
-                return
+            return
 
         conf_matrix = self.confmat.compute().cpu().numpy()
         print("\n\n### Confusion Matrix:\n", conf_matrix)
@@ -1504,6 +1504,12 @@ class GLAM(LightningModule):
         parser.add_argument("--dev", action="store_true")
         parser.add_argument("--grad_ckpt", action="store_true")
         parser.add_argument("--warm_up", type=int, default=16000)
+        parser.add_argument(
+            "--warm_up_epochs",
+            type=float,
+            default=None,
+            help="Warmup duration in epochs. If set, train.py converts it to warmup steps.",
+        )
         parser.add_argument("--balance_training", action="store_true")
         parser.add_argument("--balance_ratio", type=int, default=-1)
         parser.add_argument("--multi_label", action="store_true")
@@ -1546,6 +1552,7 @@ class GLAM(LightningModule):
         parser.add_argument("--data_pct", type=float, default=1.0)
         parser.add_argument("--train_split", type=str, default="train")
         parser.add_argument("--valid_split", type=str, default="valid")
+        parser.add_argument("--test_split", type=str, default="test")
         # RSNA-only patient-level cross validation (0 disables)
         parser.add_argument("--k_fold", type=int, default=0, help="Number of folds for patient-level cross validation (0 disables)")
         parser.add_argument("--fold", type=int, default=0, help="Which fold index to use as validation when k_fold>0")
