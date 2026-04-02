@@ -1167,11 +1167,22 @@ class GLAM(LightningModule):
                 else:
                     val_scores = np.squeeze(self.all_scores_val)
                     idx_pred = (val_scores > 0.5).astype(int)
+                if len(np.unique(idx_label)) < 2:
+                    raise ValueError(
+                        "Validation labels contain only one class; AUROC is undefined."
+                    )
                 val_auc = 100 * roc_auc_score(idx_label, val_scores)
+                if not np.isfinite(val_auc):
+                    raise ValueError("Validation AUROC is non-finite.")
                 val_bacc = 100 * balanced_accuracy_score(idx_label, idx_pred)
                 val_f1 = 100 * f1_score(idx_label, idx_pred)
-            except ValueError:
+            except ValueError as e:
                 # AUROC is undefined if only one class is present in this validation fold
+                if self.global_rank == 0:
+                    print(
+                        f"### Fold {getattr(self.hparams, 'fold', 'NA')} | "
+                        f"Validation metric fallback to 0 due to: {e}"
+                    )
                 val_auc = 0.0
                 val_bacc = 0.0
                 val_f1 = 0.0

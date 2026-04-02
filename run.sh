@@ -9,9 +9,9 @@ MAX_EPOCHS=100
 WARM_UP=0
 #指定warm_up的epoch数
 NUM_GPUS=1
-BATCH_SIZE=16
+BATCH_SIZE=32
 #batch_size大小
-NUM_WORKERS=0
+NUM_WORKERS=4
 PRECISION="32"
 LEARNING_RATE=1e-4
 
@@ -44,9 +44,6 @@ BASE_EXP_NAME="glam_kfold_ft"
 
 PRED_THRESHOLD=0.5
 FULL_EVAL_DISABLE_SPLIT_COL="__all_splits__"
-
-
-
 
 
 export WANDB_MODE="offline"

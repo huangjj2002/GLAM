@@ -282,7 +282,8 @@ class DataModule(pl.LightningDataModule):
         return DataLoader(
             dataset,
             pin_memory=True,
-            drop_last=True,
+            # Keep full validation set for stable metrics/early model selection.
+            drop_last=False,
             shuffle=False,
             collate_fn=self.collate_fn,
             batch_size=self.batch_size,
