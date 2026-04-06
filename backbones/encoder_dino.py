@@ -151,13 +151,19 @@ class DinoEncoder(nn.Module):
         if model_name in ("facebook/dinov2-base", "dinov2_hf_base"):
             self.model = HFDinoV2Wrapper("facebook/dinov2-base")
         elif "dinov2" in model_name:
-            arch_name, pretrained, num_register_tokens, patch_size = (
+            arch_name, default_pretrained, num_register_tokens, patch_size = (
                 _parse_dinov2_model_name(model_name)
             )
+            if pretrained is True:
+                pretrained_source = default_pretrained
+            elif pretrained:
+                pretrained_source = pretrained
+            else:
+                pretrained_source = None
             self.model = _make_dinov2_model(
                 arch_name=arch_name,
                 patch_size=patch_size,
-                pretrained=pretrained,
+                pretrained=pretrained_source,
                 num_register_tokens=num_register_tokens,
                 interpolate_antialias=True,
                 interpolate_offset=0.0,

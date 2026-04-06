@@ -10,10 +10,29 @@ from transformers import AutoTokenizer, BertTokenizer
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MY_API_TOKEN = "<replace-with-your-hf-api-token>"
+_DINOV2_BASE_URL = "https://dl.fbaipublicfiles.com/dinov2"
 
 
 class Weights(Enum):
     LVD142M = "LVD142M"
+
+
+def _make_dinov2_pretrained_source(model_size, patch_size, num_register_tokens):
+    model_base_name = f"dinov2_vit{model_size}{patch_size}"
+    registers_suffix = f"_reg{num_register_tokens}" if num_register_tokens else ""
+    checkpoint_name = f"{model_base_name}{registers_suffix}_pretrain.pth"
+    cache_path = os.path.expanduser(
+        f"~/.cache/torch/hub/checkpoints/{checkpoint_name}"
+    )
+    if os.path.exists(cache_path):
+        return cache_path
+    return f"{_DINOV2_BASE_URL}/{model_base_name}/{checkpoint_name}"
+
+
+def _is_url(path):
+    return isinstance(path, str) and path.startswith(
+        ("http://", "https://", "file://")
+    )
 
 
 def _parse_dinov2_model_name(dino_model_name):
@@ -28,36 +47,35 @@ def _parse_dinov2_model_name(dino_model_name):
     if model_size == "s":
         arch_name = "vit_small"
         if patch_size == 14:
-            if num_register_tokens > 0:
-                pretrained = os.path.expanduser(
-                    "~/.cache/torch/hub/checkpoints/dinov2_vits14_reg4_pretrain.pth"
-                )
-            else:
-                pretrained = os.path.expanduser(
-                    "~/.cache/torch/hub/checkpoints/dinov2_vits14_pretrain.pth"
-                )
+            pretrained = _make_dinov2_pretrained_source(
+                model_size, patch_size, num_register_tokens
+            )
         else:
             pretrained = None
     elif model_size == "b":
         arch_name = "vit_base"
         if patch_size == 14:
-            if num_register_tokens > 0:
-                pretrained = os.path.expanduser(
-                    "~/.cache/torch/hub/checkpoints/dinov2_vitb14_reg4_pretrain.pth"
-                )
-            else:
-                pretrained = os.path.expanduser(
-                    "~/.cache/torch/hub/checkpoints/dinov2_vitb14_pretrain.pth"
-                )
+            pretrained = _make_dinov2_pretrained_source(
+                model_size, patch_size, num_register_tokens
+            )
         else:
             pretrained = None
     elif model_size == "l":
         arch_name = "vit_large"
-        if patch_size == 14 and num_register_tokens > 0:
-            pretrained = os.path.expanduser(
-                "~/.cache/torch/hub/checkpoints/dinov2_vitl14_reg4_pretrain.pth"
+        if patch_size == 14:
+            pretrained = _make_dinov2_pretrained_source(
+                model_size, patch_size, num_register_tokens
             )
         else:
+            pretrained = None
+    elif model_size == "g":
+        arch_name = "vit_giant2"
+        if patch_size == 14:
+            pretrained = _make_dinov2_pretrained_source(
+                model_size, patch_size, num_register_tokens
+            )
+        else:
+            warnings.warn("Using the giant model w/o pretraining.")
             pretrained = None
     else:
         arch_name = "vit_giant2"
@@ -105,7 +123,12 @@ def _make_dinov2_model(
     model = vits.__dict__[arch_name](**vit_kwargs)
 
     if pretrained:
-        state_dict = torch.load(pretrained, map_location="cpu")
+        if _is_url(pretrained):
+            state_dict = torch.hub.load_state_dict_from_url(
+                pretrained, map_location="cpu"
+            )
+        else:
+            state_dict = torch.load(pretrained, map_location="cpu")
         try:
             model.load_state_dict(state_dict, strict=True)
         except Exception as e:

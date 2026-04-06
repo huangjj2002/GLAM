@@ -117,12 +117,16 @@ class GLAM(LightningModule):
 
         # init encoders
         downsample_factor = 14
+        # When a full local encoder checkpoint is provided, skip the extra
+        # DINOv2 pretraining download and restore weights from that checkpoint below.
+        init_dino_pretrained = self.hparams.pretrained_encoder is None
         self.img_encoder_q = DinoEncoder(
             model_name=img_encoder,
             output_dim=self.hparams.emb_dim,
             linear_proj=self.hparams.linear_proj,
             freeze_vit=self.hparams.freeze_vit,
             vit_grad_ckpt=self.hparams.vit_grad_ckpt,
+            pretrained=init_dino_pretrained,
             img_size=self.hparams.crop_size,
         )
 

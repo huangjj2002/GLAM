@@ -1,6 +1,4 @@
-﻿
-set -euo pipefail
-
+﻿set -euo pipefail
 
 GPU_ID=0
 #指定GPU
@@ -24,9 +22,9 @@ LLM_TYPE="bert"
 IMG_SIZE=336
 CROP_SIZE=336
 
-CSV_PATH="/mnt/f/data/train_with_test_data.csv"
+CSV_PATH="/opt/localdata/Data/dh/dh_preprocessed/hjj_images/embed_data_testcohort_enriched.csv"
 #csv文件地址
-IMG_ROOT="/mnt/f/data/images_png"
+IMG_ROOT="/opt/localdata/Data/dh/dh_preprocessed/hjj_images/images_png"
 #图片地址
 PATH_PATTERN="{pid}/{iid}"
 
