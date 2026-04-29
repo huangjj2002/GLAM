@@ -1664,6 +1664,11 @@ class GLAM(LightningModule):
 
         parser.add_argument("--use_flash_attention", action="store_true")
 
+        # Early stopping args
+        parser.add_argument("--early_stop", action="store_true", help="Enable early stopping based on validation metric.")
+        parser.add_argument("--early_stop_patience", type=int, default=10, help="Number of epochs with no improvement before stopping.")
+        parser.add_argument("--early_stop_min_delta", type=float, default=0.0, help="Minimum change in the monitored metric to qualify as an improvement.")
+
         return parser
 
     @staticmethod

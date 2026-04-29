@@ -411,14 +411,34 @@ class RSNAMammo(torch.utils.data.Dataset):
         if k_fold and k_fold > 0 and split in ["train", "valid"]:
             assert k_fold >= 2, "k_fold must be >= 2 for KFold"
             assert 0 <= fold < k_fold, f"fold must be in [0, {k_fold-1}]"
-            from sklearn.model_selection import KFold
+            from sklearn.model_selection import StratifiedGroupKFold
 
-            uniq_pids = self.df[_patient_col].astype(str).unique()
-            kf = KFold(n_splits=k_fold, shuffle=True, random_state=42)
-            splits = list(kf.split(uniq_pids))
+            # Build per-patient label for stratification:
+            #   If a patient has ANY cancer=1 image, label=1; otherwise label=0.
+            #   Convert patient_col to str first to match the .astype(str).isin() below.
+            pid_labels = (
+                self.df.groupby(self.df[_patient_col].astype(str))[_label_col]
+                .max()
+                .astype(int)
+            )
+            uniq_pids = pid_labels.index.to_numpy()   # str-typed patient ids
+            pid_stratify_labels = pid_labels.values   # 0 or 1 per patient
+
+            sgkf = StratifiedGroupKFold(n_splits=k_fold, shuffle=True, random_state=42)
+            # StratifiedGroupKFold needs group parameter; we use patient_id as group
+            # but our "samples" are unique patients, so groups == X indices == patient ids
+            splits = list(sgkf.split(uniq_pids, pid_stratify_labels, groups=uniq_pids))
             train_idx, val_idx = splits[fold]
             train_pids = set(uniq_pids[train_idx])
             val_pids = set(uniq_pids[val_idx])
+
+            print(f"### StratifiedGroupKFold fold={fold}/{k_fold}")
+            print(f"###   Train patients: {len(train_pids)}, "
+                  f"cancer patients: {int(pid_stratify_labels[train_idx].sum())}, "
+                  f"no-cancer patients: {int((pid_stratify_labels[train_idx] == 0).sum())}")
+            print(f"###   Val   patients: {len(val_pids)}, "
+                  f"cancer patients: {int(pid_stratify_labels[val_idx].sum())}, "
+                  f"no-cancer patients: {int((pid_stratify_labels[val_idx] == 0).sum())}")
 
             if split == "train":
                 self.df = self.df[self.df[_patient_col].astype(str).isin(train_pids)]

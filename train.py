@@ -95,6 +95,17 @@ def train(args, model, datamodule):
                 save_top_k=2,
             )
         )
+    # Early stopping callback
+    if getattr(args, "early_stop", False):
+        early_stop_callback = EarlyStopping(
+            monitor=monitor,
+            patience=args.early_stop_patience,
+            min_delta=args.early_stop_min_delta,
+            mode=mode,
+            verbose=True,
+        )
+        callbacks.append(early_stop_callback)
+        print(f"### Early stopping enabled: monitor={monitor}, mode={mode}, patience={args.early_stop_patience}, min_delta={args.early_stop_min_delta}")
     logger_dir = os.path.join(BASE_DIR, f"./logs")
     os.makedirs(logger_dir, exist_ok=True)
     if args.img_cls_ft:

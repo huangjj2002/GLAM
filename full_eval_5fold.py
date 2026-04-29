@@ -13,6 +13,7 @@ from sklearn.metrics import (
     f1_score,
     roc_auc_score,
 )
+from sklearn.model_selection import KFold
 
 
 def normalize_path(path: str) -> str:
@@ -219,6 +220,12 @@ def main():
     parser.add_argument("--output_report", type=str, required=True)
     parser.add_argument("--output_csv", type=str, required=True)
     parser.add_argument("--per_model_output_dir", type=str, required=True)
+    parser.add_argument("--test_split_value", type=str, default="test",
+                        help="Value in split_col that identifies test samples (fold=-1)")
+    parser.add_argument("--train_split_value", type=str, default="training",
+                        help="Value in split_col that identifies training samples")
+    parser.add_argument("--k_fold", type=int, default=5,
+                        help="Number of folds (must match training)")
     args = parser.parse_args()
 
     os.makedirs(os.path.dirname(args.output_report) or ".", exist_ok=True)
@@ -254,6 +261,25 @@ def main():
     )
     df_paths = df["_path"].to_numpy()
     y_true_csv = df[args.label_col].astype(int).to_numpy()
+
+    # Identify test-set rows so we can mark their fold as -1
+    is_test = None
+    if args.split_col in df.columns:
+        is_test = df[args.split_col].astype(str) == args.test_split_value
+
+    # Assign each training sample to its fold (matching the KFold split used in training)
+    # Test samples will get fold = -1
+    fold_assignment = pd.Series(-1, index=df.index)
+    if args.split_col in df.columns and args.k_fold > 1:
+        is_train = df[args.split_col].astype(str) == args.train_split_value
+        train_df = df.loc[is_train]
+        uniq_pids = train_df[args.patient_col].astype(str).unique()
+        kf = KFold(n_splits=args.k_fold, shuffle=True, random_state=42)
+        splits = list(kf.split(uniq_pids))
+        for fold_i, (_, val_idx) in enumerate(splits):
+            val_pids = set(uniq_pids[val_idx])
+            mask = is_train & df[args.patient_col].astype(str).isin(val_pids)
+            fold_assignment.loc[mask] = fold_i
 
     fold_scores = []
     fold_metrics = {}
@@ -293,6 +319,7 @@ def main():
 
         fold_pred_class = (aligned_scores >= args.threshold).astype(int)
         fold_out = base_out_df.copy()
+        fold_out["fold"] = fold_assignment
         fold_out["pred_score"] = aligned_scores
         fold_out["pred_class"] = fold_pred_class
         fold_csv_path = os.path.join(
@@ -320,6 +347,7 @@ def main():
     ensemble_metrics = {"overall": ensemble_overall, "per_split": ensemble_per_split}
 
     ensemble_out = base_out_df.copy()
+    ensemble_out["fold"] = fold_assignment
     ensemble_out["pred_score"] = ensemble_score
     ensemble_out["pred_class"] = ensemble_pred_class
     ensemble_out.to_csv(args.output_csv, index=False)
