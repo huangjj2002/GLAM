@@ -1,22 +1,23 @@
-﻿set -euo pipefail
+﻿#!/bin/bash
+set -euo pipefail
 
 GPU_ID=0
 #指定GPU
-MAX_EPOCHS=5
+MAX_EPOCHS=25
 #指定每一折训练的epoch
-WARM_UP=0
+WARM_UP=1
 #指定warm_up的epoch数
 NUM_GPUS=1
-BATCH_SIZE=8
+BATCH_SIZE=32
 #batch_size大小
-NUM_WORKERS=0
+NUM_WORKERS=4
 PRECISION="32"
 LEARNING_RATE=1e-4
 
 # 早停策略配置
 EARLY_STOP=1
 #是否启用早停（1=启用，0=禁用）
-EARLY_STOP_PATIENCE=2
+EARLY_STOP_PATIENCE=5
 #早停耐心轮数，即验证指标连续多少个epoch没有改善后停止训练
 
 OUTPUT_DIR="outputs"
@@ -28,9 +29,9 @@ LLM_TYPE="bert"
 IMG_SIZE=336
 CROP_SIZE=336
 
-CSV_PATH="/mnt/g/data/train_with_test_data.csv"
+CSV_PATH="/opt/localdata/Data/dh/dh_preprocessed/hjj_images/embed_data_testcohort_enriched.csv"
 #csv文件地址
-IMG_ROOT="/mnt/g/data/images_png"
+IMG_ROOT="/opt/localdata/Data/dh/dh_preprocessed/hjj_images/images_png"
 #图片地址
 PATH_PATTERN="{pid}/{iid}"
 
