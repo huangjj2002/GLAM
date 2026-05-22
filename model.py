@@ -957,6 +957,18 @@ class GLAM(LightningModule):
             for k, v in ex_loss_dict.items():
                 log[f"train_{k}"] = v
         self.log_dict(
+            {
+                "train_loss_step": loss.detach(),
+                "train_acc1_step": acc1,
+            },
+            on_step=True,
+            on_epoch=False,
+            batch_size=self.hparams.batch_size,
+            sync_dist=True,
+            prog_bar=True,
+            rank_zero_only=True,
+        )
+        self.log_dict(
             log,
             on_step=False,
             on_epoch=True,
@@ -986,6 +998,18 @@ class GLAM(LightningModule):
         if ex_loss_dict is not None:
             for k, v in ex_loss_dict.items():
                 log[f"train_{k}"] = v
+        self.log_dict(
+            {
+                "val_loss_step": loss.detach(),
+                "val_acc1_step": acc1,
+            },
+            on_step=True,
+            on_epoch=False,
+            batch_size=self.hparams.batch_size,
+            sync_dist=True,
+            prog_bar=True,
+            rank_zero_only=True,
+        )
         self.log_dict(
             log,
             on_step=False,
@@ -1604,6 +1628,12 @@ class GLAM(LightningModule):
         parser.add_argument("--rsna_split_col", type=str, default="split", help="Split column name in the custom CSV (optional).")
         parser.add_argument("--rsna_train_split_value", type=str, default="training", help="Value in split column that denotes the train pool for k-fold.")
         parser.add_argument("--rsna_test_split_value", type=str, default="test", help="Value in split column that denotes the held-out test pool.")
+        parser.add_argument("--split_source", type=str, default="cohort", choices=["split", "cohort"], help="How to derive train/test pools for custom RSNA CSVs.")
+        parser.add_argument("--rsna_cohort_col", type=str, default="cohert_num", help="Cohort column name used when --split_source cohort.")
+        parser.add_argument("--train_cohorts", type=str, default="1-8", help="Cohort spec for training pool, e.g. '1-8' or '1,2,3'.")
+        parser.add_argument("--test_cohorts", type=str, default="9-10", help="Cohort spec for test pool, e.g. '9-10' or '9,10'.")
+        parser.add_argument("--output_split_col", type=str, default="split", help="Output split column name for exported prediction CSVs.")
+        parser.add_argument("--rsna_use_all_data", action="store_true", help="Disable split/cohort filtering and evaluate on all rows of the custom RSNA CSV.")
         parser.add_argument("--load_jpg", action="store_true")
         parser.add_argument("--img_size", type=int, default=224)
         parser.add_argument("--crop_size", type=int, default=224)

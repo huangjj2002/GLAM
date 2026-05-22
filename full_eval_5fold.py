@@ -13,10 +13,11 @@ from sklearn.metrics import (
     f1_score,
     roc_auc_score,
 )
-from sklearn.model_selection import KFold
+
+from split_utils import build_output_split_series, build_split_metadata
 
 
-def normalize_path(path: str) -> str:
+def normalize_path(path: str):
     return os.path.normpath(str(path))
 
 
@@ -132,20 +133,17 @@ def compute_binary_metrics(y_true, y_score, threshold=0.5):
     }
 
 
-def split_metrics(df, y_true, y_score, split_col, threshold):
+def split_metrics(split_series, y_true, y_score, threshold):
     overall = compute_binary_metrics(y_true, y_score, threshold)
     per_split = {}
-    if split_col in df.columns:
-        split_series = df[split_col].astype(str)
-        for split_name in sorted(split_series.unique()):
-            mask = split_series == split_name
-            per_split[str(split_name)] = compute_binary_metrics(
-                y_true[mask.to_numpy()],
-                y_score[mask.to_numpy()],
-                threshold,
-            )
-    else:
-        per_split["all"] = overall
+    split_series = split_series.astype(str)
+    for split_name in sorted(split_series.unique()):
+        mask = split_series == split_name
+        per_split[str(split_name)] = compute_binary_metrics(
+            y_true[mask.to_numpy()],
+            y_score[mask.to_numpy()],
+            threshold,
+        )
     return overall, per_split
 
 
@@ -161,15 +159,6 @@ def fmt(x):
     if np.isnan(v):
         return "nan"
     return f"{v:.6f}"
-
-
-def build_output_df(df, patient_col, image_col, split_col, label_col, cohort_col):
-    output_cols = [patient_col, image_col]
-    if split_col in df.columns:
-        output_cols.append(split_col)
-    output_cols.append(label_col)
-    output_cols.append(cohort_col)
-    return df[output_cols].copy()
 
 
 def write_report(path, ckpt_paths, fold_metrics, ensemble_metrics):
@@ -215,17 +204,18 @@ def main():
     parser.add_argument("--label_col", type=str, default="cancer")
     parser.add_argument("--split_col", type=str, default="split")
     parser.add_argument("--cohort_col", type=str, default="cohert_num")
+    parser.add_argument("--split_source", type=str, default="cohort", choices=["split", "cohort"])
+    parser.add_argument("--train_split_value", type=str, default="training")
+    parser.add_argument("--test_split_value", type=str, default="test")
+    parser.add_argument("--train_cohorts", type=str, default="1-8")
+    parser.add_argument("--test_cohorts", type=str, default="9-10")
+    parser.add_argument("--output_split_col", type=str, default="split")
     parser.add_argument("--threshold", type=float, default=0.5)
     parser.add_argument("--ckpt_paths", nargs="+", required=True)
     parser.add_argument("--output_report", type=str, required=True)
     parser.add_argument("--output_csv", type=str, required=True)
     parser.add_argument("--per_model_output_dir", type=str, required=True)
-    parser.add_argument("--test_split_value", type=str, default="test",
-                        help="Value in split_col that identifies test samples (fold=-1)")
-    parser.add_argument("--train_split_value", type=str, default="training",
-                        help="Value in split_col that identifies training samples")
-    parser.add_argument("--k_fold", type=int, default=5,
-                        help="Number of folds (must match training)")
+    parser.add_argument("--k_fold", type=int, default=5)
     args = parser.parse_args()
 
     os.makedirs(os.path.dirname(args.output_report) or ".", exist_ok=True)
@@ -238,15 +228,22 @@ def main():
         if col not in df.columns:
             raise KeyError(f"Column '{col}' not found in input CSV: {args.csv_path}")
 
-    cohort_col = args.cohort_col
-    if cohort_col not in df.columns:
-        if cohort_col == "cohert_num" and "cohort_num" in df.columns:
-            cohort_col = "cohort_num"
-        else:
-            raise KeyError(
-                f"Cohort column '{args.cohort_col}' not found in input CSV. "
-                f"Available columns: {list(df.columns)}"
-            )
+    split_metadata = build_split_metadata(
+        df,
+        patient_col=args.patient_col,
+        label_col=args.label_col,
+        split_source=args.split_source,
+        split_col=args.split_col,
+        train_split_value=args.train_split_value,
+        test_split_value=args.test_split_value,
+        cohort_col=args.cohort_col,
+        train_cohorts=args.train_cohorts,
+        test_cohorts=args.test_cohorts,
+        k_fold=args.k_fold,
+    )
+    actual_cohort_col = split_metadata["actual_cohort_col"]
+    base_split = split_metadata["base_split"]
+    fold_assignment = split_metadata["fold_assignment"]
 
     df = df.copy()
     df["_path"] = df.apply(
@@ -262,37 +259,14 @@ def main():
     df_paths = df["_path"].to_numpy()
     y_true_csv = df[args.label_col].astype(int).to_numpy()
 
-    # Identify test-set rows so we can mark their fold as -1
-    is_test = None
-    if args.split_col in df.columns:
-        is_test = df[args.split_col].astype(str) == args.test_split_value
-
-    # Assign each training sample to its fold (matching the KFold split used in training)
-    # Test samples will get fold = -1
-    fold_assignment = pd.Series(-1, index=df.index)
-    if args.split_col in df.columns and args.k_fold > 1:
-        is_train = df[args.split_col].astype(str) == args.train_split_value
-        train_df = df.loc[is_train]
-        uniq_pids = train_df[args.patient_col].astype(str).unique()
-        kf = KFold(n_splits=args.k_fold, shuffle=True, random_state=42)
-        splits = list(kf.split(uniq_pids))
-        for fold_i, (_, val_idx) in enumerate(splits):
-            val_pids = set(uniq_pids[val_idx])
-            mask = is_train & df[args.patient_col].astype(str).isin(val_pids)
-            fold_assignment.loc[mask] = fold_i
+    base_columns = [args.patient_col, args.image_col, args.label_col]
+    if actual_cohort_col is not None:
+        base_columns.append(actual_cohort_col)
+    base_out_df = df[base_columns].copy()
 
     fold_scores = []
     fold_metrics = {}
     ref_labels = None
-
-    base_out_df = build_output_df(
-        df,
-        args.patient_col,
-        args.image_col,
-        args.split_col,
-        args.label_col,
-        cohort_col,
-    )
 
     for fold_idx, ckpt in enumerate(args.ckpt_paths):
         pred_paths, pred_scores, pred_labels = load_fold_prediction(ckpt)
@@ -308,20 +282,21 @@ def main():
             )
 
         fold_scores.append(aligned_scores)
+        current_fold = fold_idx if args.k_fold > 1 else None
+        split_series = build_output_split_series(base_split, fold_assignment, current_fold=current_fold)
         fold_overall, fold_per_split = split_metrics(
-            df,
+            split_series,
             y_true_csv,
             aligned_scores,
-            args.split_col,
             args.threshold,
         )
         fold_metrics[fold_idx] = {"overall": fold_overall, "per_split": fold_per_split}
 
-        fold_pred_class = (aligned_scores >= args.threshold).astype(int)
         fold_out = base_out_df.copy()
-        fold_out["fold"] = fold_assignment
+        fold_out[args.output_split_col] = split_series.values
+        fold_out["fold"] = fold_assignment.values
         fold_out["pred_score"] = aligned_scores
-        fold_out["pred_class"] = fold_pred_class
+        fold_out["pred_class"] = (aligned_scores >= args.threshold).astype(int)
         fold_csv_path = os.path.join(
             args.per_model_output_dir, f"fold{fold_idx}_predictions.csv"
         )
@@ -338,16 +313,16 @@ def main():
     ensemble_pred_class = (ensemble_score >= args.threshold).astype(int)
 
     ensemble_overall, ensemble_per_split = split_metrics(
-        df,
+        base_split,
         y_true_csv,
         ensemble_score,
-        args.split_col,
         args.threshold,
     )
     ensemble_metrics = {"overall": ensemble_overall, "per_split": ensemble_per_split}
 
     ensemble_out = base_out_df.copy()
-    ensemble_out["fold"] = fold_assignment
+    ensemble_out[args.output_split_col] = base_split.values
+    ensemble_out["fold"] = fold_assignment.values
     ensemble_out["pred_score"] = ensemble_score
     ensemble_out["pred_class"] = ensemble_pred_class
     ensemble_out.to_csv(args.output_csv, index=False)

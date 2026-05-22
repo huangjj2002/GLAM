@@ -40,15 +40,18 @@ IMAGE_COL="image_id"
 LABEL_COL="cancer"
 SPLIT_COL="split"
 COHORT_COL="cohert_num"
+SPLIT_SOURCE="cohort"
 TRAIN_SPLIT_VALUE="training"
 TEST_SPLIT_VALUE="test"
+TRAIN_COHORTS="1-8"
+TEST_COHORTS="9-10"
+OUTPUT_SPLIT_COL="split"
 
 PRETRAINED_ENCODER="$(cd "$(dirname "$0")" && pwd)/pretrain_model/last.ckpt"
 NUM_FOLDS=5
 BASE_EXP_NAME="glam_kfold_ft"
 
 PRED_THRESHOLD=0.5
-FULL_EVAL_DISABLE_SPLIT_COL="__all_splits__"
 
 
 export WANDB_MODE="offline"
@@ -115,10 +118,20 @@ if [[ ! -f "${PRETRAINED_ENCODER}" ]]; then
 fi
 
 echo "=============================="
-echo "Stage 1/3: ${NUM_FOLDS}-fold training"
+if [[ "${NUM_FOLDS}" == "0" ]]; then
+  echo "Stage 1/3: single-model training"
+else
+  echo "Stage 1/3: ${NUM_FOLDS}-fold training"
+fi
 echo "=============================="
 
-for ((FOLD=0; FOLD<NUM_FOLDS; FOLD++)); do
+TRAIN_FOLD_START=0
+TRAIN_FOLD_END=${NUM_FOLDS}
+if [[ "${NUM_FOLDS}" == "0" ]]; then
+  TRAIN_FOLD_END=1
+fi
+
+for ((FOLD=TRAIN_FOLD_START; FOLD<TRAIN_FOLD_END; FOLD++)); do
   EXP_NAME="${BASE_EXP_NAME}_${RUN_TAG}_fold${FOLD}"
   TRAIN_LOG="${RESULTS_DIR}/fold${FOLD}_train.log"
   echo "---- Training fold ${FOLD} (${EXP_NAME}) ----"
@@ -149,6 +162,11 @@ for ((FOLD=0; FOLD<NUM_FOLDS; FOLD++)); do
     --num_classes 1 \
     --weighted_binary \
     --balance_training \
+    --split_source "${SPLIT_SOURCE}" \
+    --rsna_cohort_col "${COHORT_COL}" \
+    --train_cohorts "${TRAIN_COHORTS}" \
+    --test_cohorts "${TEST_COHORTS}" \
+    --output_split_col "${OUTPUT_SPLIT_COL}" \
     --rsna_csv_path "${CSV_PATH}" \
     --rsna_img_root "${IMG_ROOT}" \
     --rsna_path_pattern "${PATH_PATTERN}" \
@@ -162,11 +180,15 @@ for ((FOLD=0; FOLD<NUM_FOLDS; FOLD++)); do
 done
 
 echo "=============================="
-echo "Stage 2/3: Full-data eval with ${NUM_FOLDS} best classifiers"
+if [[ "${NUM_FOLDS}" == "0" ]]; then
+  echo "Stage 2/3: Full-data eval with single best classifier"
+else
+  echo "Stage 2/3: Full-data eval with ${NUM_FOLDS} best classifiers"
+fi
 echo "=============================="
 
 BEST_CKPTS=()
-for ((FOLD=0; FOLD<NUM_FOLDS; FOLD++)); do
+for ((FOLD=TRAIN_FOLD_START; FOLD<TRAIN_FOLD_END; FOLD++)); do
   EXP_NAME="${BASE_EXP_NAME}_${RUN_TAG}_fold${FOLD}"
   CKPT_DIR="$(ls -dt logs/ckpts/GLAM/*"${EXP_NAME}" 2>/dev/null | head -n 1 || true)"
   if [[ -z "${CKPT_DIR}" ]]; then
@@ -208,16 +230,22 @@ for ((FOLD=0; FOLD<NUM_FOLDS; FOLD++)); do
     --num_workers "${NUM_WORKERS}" \
     --k_fold 0 \
     --fold 0 \
+    --rsna_use_all_data \
     --pretrained_model "${CKPT_PATH}" \
     --num_classes 1 \
     --weighted_binary \
+    --split_source "${SPLIT_SOURCE}" \
+    --rsna_cohort_col "${COHORT_COL}" \
+    --train_cohorts "${TRAIN_COHORTS}" \
+    --test_cohorts "${TEST_COHORTS}" \
+    --output_split_col "${OUTPUT_SPLIT_COL}" \
     --rsna_csv_path "${CSV_PATH}" \
     --rsna_img_root "${IMG_ROOT}" \
     --rsna_path_pattern "${PATH_PATTERN}" \
     --rsna_patient_col "${PATIENT_COL}" \
     --rsna_image_col "${IMAGE_COL}" \
     --rsna_label_col "${LABEL_COL}" \
-    --rsna_split_col "${FULL_EVAL_DISABLE_SPLIT_COL}" \
+    --rsna_split_col "${SPLIT_COL}" \
     --rsna_train_split_value "${TRAIN_SPLIT_VALUE}" \
     --rsna_test_split_value "${TEST_SPLIT_VALUE}" 2>&1 | tee "${EVAL_LOG}"
 done
@@ -235,8 +263,12 @@ python -u full_eval_5fold.py \
   --label_col "${LABEL_COL}" \
   --split_col "${SPLIT_COL}" \
   --cohort_col "${COHORT_COL}" \
+  --split_source "${SPLIT_SOURCE}" \
   --test_split_value "${TEST_SPLIT_VALUE}" \
   --train_split_value "${TRAIN_SPLIT_VALUE}" \
+  --train_cohorts "${TRAIN_COHORTS}" \
+  --test_cohorts "${TEST_COHORTS}" \
+  --output_split_col "${OUTPUT_SPLIT_COL}" \
   --k_fold "${NUM_FOLDS}" \
   --threshold "${PRED_THRESHOLD}" \
   --ckpt_paths "${BEST_CKPTS[@]}" \

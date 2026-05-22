@@ -341,6 +341,11 @@ def cli_main():
         rsna_split_col=args.rsna_split_col,
         rsna_train_split_value=args.rsna_train_split_value,
         rsna_test_split_value=args.rsna_test_split_value,
+        rsna_split_source=args.split_source,
+        rsna_cohort_col=args.rsna_cohort_col,
+        rsna_train_cohorts=args.train_cohorts,
+        rsna_test_cohorts=args.test_cohorts,
+        rsna_use_all_data=args.rsna_use_all_data,
     )
 
     # ------------------------------------------------------------------

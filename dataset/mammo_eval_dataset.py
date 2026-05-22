@@ -15,6 +15,7 @@ from skimage.exposure import rescale_intensity
 import matplotlib.pyplot as plt
 from .constants_val import *
 from .utils import get_imgs, read_from_dicom, get_tokenizer
+from split_utils import build_split_metadata
 
 
 class VinDr(torch.utils.data.Dataset):
@@ -310,6 +311,11 @@ class RSNAMammo(torch.utils.data.Dataset):
         split_col="split",
         train_split_value="training",
         test_split_value="test",
+        split_source="cohort",
+        cohort_col="cohert_num",
+        train_cohorts="1-8",
+        test_cohorts="9-10",
+        use_all_data=False,
         *args,
         **kwargs,
     ):
@@ -376,20 +382,35 @@ class RSNAMammo(torch.utils.data.Dataset):
             _patient_col = patient_col if patient_col in self.df.columns else "patient_id"
             _image_col = image_col if image_col in self.df.columns else "image_id"
 
-            # Optional split filtering (e.g., split in {'training','test'})
-            # Per your requirement:
-            #   - when k_fold==0: keep behavior close to original project (do not force training/valid filtering);
-            #     still allow explicit test filtering if user requests split="test"
-            #   - when k_fold>0: train/valid are drawn from 'training', and test is drawn from 'test'
-            if split_col in self.df.columns:
+            if not use_all_data:
+                split_metadata = build_split_metadata(
+                    self.df,
+                    patient_col=_patient_col,
+                    label_col=_label_col,
+                    split_source=split_source,
+                    split_col=split_col,
+                    train_split_value=train_split_value,
+                    test_split_value=test_split_value,
+                    cohort_col=cohort_col,
+                    train_cohorts=train_cohorts,
+                    test_cohorts=test_cohorts,
+                    k_fold=k_fold,
+                )
+                self.df["_fold_assignment"] = split_metadata["fold_assignment"].values
+
+                train_mask = split_metadata["train_mask"]
+                test_mask = split_metadata["test_mask"]
+
                 if k_fold and k_fold > 0:
                     if split in ["train", "valid"]:
-                        self.df = self.df[self.df[split_col] == train_split_value]
+                        self.df = self.df.loc[train_mask].copy()
                     elif split == "test":
-                        self.df = self.df[self.df[split_col] == test_split_value]
+                        self.df = self.df.loc[test_mask].copy()
                 else:
-                    if split == "test":
-                        self.df = self.df[self.df[split_col] == test_split_value]
+                    if split == "train":
+                        self.df = self.df.loc[train_mask].copy()
+                    else:
+                        self.df = self.df.loc[test_mask].copy()
 
             _data_root = img_root if img_root is not None else RSNA_MAMMO_JPEG_DIR
             _path_pattern = path_pattern if path_pattern is not None else "{pid}/{iid}"
@@ -408,43 +429,70 @@ class RSNAMammo(torch.utils.data.Dataset):
         # ---------------------------
         # Patient-level K-fold (RSNA pipeline only)
         # ---------------------------
-        if k_fold and k_fold > 0 and split in ["train", "valid"]:
+        if (not use_all_data) and k_fold and k_fold > 0 and split in ["train", "valid"]:
             assert k_fold >= 2, "k_fold must be >= 2 for KFold"
             assert 0 <= fold < k_fold, f"fold must be in [0, {k_fold-1}]"
-            from sklearn.model_selection import StratifiedGroupKFold
+            if "_fold_assignment" in self.df.columns:
+                pid_fold_df = (
+                    self.df.groupby(self.df[_patient_col].astype(str))
+                    .agg(
+                        label=(_label_col, "max"),
+                        fold_assignment=("_fold_assignment", "max"),
+                    )
+                )
+                train_pid_df = pid_fold_df[pid_fold_df["fold_assignment"] != fold]
+                val_pid_df = pid_fold_df[pid_fold_df["fold_assignment"] == fold]
 
-            # Build per-patient label for stratification:
-            #   If a patient has ANY cancer=1 image, label=1; otherwise label=0.
-            #   Convert patient_col to str first to match the .astype(str).isin() below.
-            pid_labels = (
-                self.df.groupby(self.df[_patient_col].astype(str))[_label_col]
-                .max()
-                .astype(int)
-            )
-            uniq_pids = pid_labels.index.to_numpy()   # str-typed patient ids
-            pid_stratify_labels = pid_labels.values   # 0 or 1 per patient
+                print(f"### StratifiedGroupKFold fold={fold}/{k_fold}", flush=True)
+                print(f"###   Train patients: {len(train_pid_df)}, "
+                      f"cancer patients: {int(train_pid_df['label'].sum())}, "
+                      f"no-cancer patients: {int((train_pid_df['label'] == 0).sum())}",
+                      flush=True)
+                print(f"###   Val   patients: {len(val_pid_df)}, "
+                      f"cancer patients: {int(val_pid_df['label'].sum())}, "
+                      f"no-cancer patients: {int((val_pid_df['label'] == 0).sum())}",
+                      flush=True)
 
-            sgkf = StratifiedGroupKFold(n_splits=k_fold, shuffle=True, random_state=42)
-            # StratifiedGroupKFold needs group parameter; we use patient_id as group
-            # but our "samples" are unique patients, so groups == X indices == patient ids
-            splits = list(sgkf.split(uniq_pids, pid_stratify_labels, groups=uniq_pids))
-            train_idx, val_idx = splits[fold]
-            train_pids = set(uniq_pids[train_idx])
-            val_pids = set(uniq_pids[val_idx])
-
-            print(f"### StratifiedGroupKFold fold={fold}/{k_fold}")
-            print(f"###   Train patients: {len(train_pids)}, "
-                  f"cancer patients: {int(pid_stratify_labels[train_idx].sum())}, "
-                  f"no-cancer patients: {int((pid_stratify_labels[train_idx] == 0).sum())}")
-            print(f"###   Val   patients: {len(val_pids)}, "
-                  f"cancer patients: {int(pid_stratify_labels[val_idx].sum())}, "
-                  f"no-cancer patients: {int((pid_stratify_labels[val_idx] == 0).sum())}")
-
-            if split == "train":
-                self.df = self.df[self.df[_patient_col].astype(str).isin(train_pids)]
+                if split == "train":
+                    self.df = self.df[self.df["_fold_assignment"] != fold]
+                else:
+                    self.df = self.df[self.df["_fold_assignment"] == fold]
             else:
-                self.df = self.df[self.df[_patient_col].astype(str).isin(val_pids)]
+                # Official RSNA path keeps the legacy per-patient SGKF behavior.
+                pid_labels = (
+                    self.df.groupby(self.df[_patient_col].astype(str))[_label_col]
+                    .max()
+                    .astype(int)
+                )
+                uniq_pids = pid_labels.index.to_numpy()
+                pid_stratify_labels = pid_labels.values
+
+                from sklearn.model_selection import StratifiedGroupKFold
+
+                sgkf = StratifiedGroupKFold(n_splits=k_fold, shuffle=True, random_state=42)
+                splits = list(sgkf.split(uniq_pids, pid_stratify_labels, groups=uniq_pids))
+                train_idx, val_idx = splits[fold]
+                train_pids = set(uniq_pids[train_idx])
+                val_pids = set(uniq_pids[val_idx])
+
+                print(f"### StratifiedGroupKFold fold={fold}/{k_fold}", flush=True)
+                print(f"###   Train patients: {len(train_pids)}, "
+                      f"cancer patients: {int(pid_stratify_labels[train_idx].sum())}, "
+                      f"no-cancer patients: {int((pid_stratify_labels[train_idx] == 0).sum())}",
+                      flush=True)
+                print(f"###   Val   patients: {len(val_pids)}, "
+                      f"cancer patients: {int(pid_stratify_labels[val_idx].sum())}, "
+                      f"no-cancer patients: {int((pid_stratify_labels[val_idx] == 0).sum())}",
+                      flush=True)
+
+                if split == "train":
+                    self.df = self.df[self.df[_patient_col].astype(str).isin(train_pids)]
+                else:
+                    self.df = self.df[self.df[_patient_col].astype(str).isin(val_pids)]
             self.df = self.df.reset_index(drop=True)
+
+        if "_fold_assignment" in self.df.columns:
+            self.df = self.df.drop(columns=["_fold_assignment"])
 
         # stash for later path/label construction
         self._patient_col = _patient_col
@@ -465,7 +513,6 @@ class RSNAMammo(torch.utils.data.Dataset):
         self.filenames = []
         self.path2label = {}
         self.labels = []
-        missing_cnt = 0
         for idx in self.train_idx:
             entry = self.df.iloc[idx]
             label = int(entry[self._label_col])
@@ -473,12 +520,10 @@ class RSNAMammo(torch.utils.data.Dataset):
             iid = str(entry[self._image_col])
             rel_path = self._path_pattern.format(pid=pid, iid=iid)
             path = os.path.join(self._data_root, rel_path)
-            if not os.path.exists(path):
-                missing_cnt += 1
             self.labels.append(label)
             self.filenames.append(path)
             self.path2label[path] = label
-        print("### Sampled split distribution: ", Counter(self.labels))
+        print("### Sampled split distribution: ", Counter(self.labels), flush=True)
 
     def __len__(self):
         return len(self.df)

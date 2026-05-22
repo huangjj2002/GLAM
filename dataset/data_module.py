@@ -51,6 +51,11 @@ class DataModule(pl.LightningDataModule):
         rsna_split_col='split',
         rsna_train_split_value='training',
         rsna_test_split_value='test',
+        rsna_split_source='cohort',
+        rsna_cohort_col='cohert_num',
+        rsna_train_cohorts='1-8',
+        rsna_test_cohorts='9-10',
+        rsna_use_all_data=False,
         bootstrap_test=False,
         aug_text=False,
         heavy_aug=False,
@@ -112,6 +117,11 @@ class DataModule(pl.LightningDataModule):
         self.rsna_split_col = rsna_split_col
         self.rsna_train_split_value = rsna_train_split_value
         self.rsna_test_split_value = rsna_test_split_value
+        self.rsna_split_source = rsna_split_source
+        self.rsna_cohort_col = rsna_cohort_col
+        self.rsna_train_cohorts = rsna_train_cohorts
+        self.rsna_test_cohorts = rsna_test_cohorts
+        self.rsna_use_all_data = rsna_use_all_data
         self.bootstrap_test = bootstrap_test
         self.aug_text = aug_text
         self.heavy_aug = heavy_aug
@@ -152,6 +162,11 @@ class DataModule(pl.LightningDataModule):
             "split_col": self.rsna_split_col,
             "train_split_value": self.rsna_train_split_value,
             "test_split_value": self.rsna_test_split_value,
+            "split_source": self.rsna_split_source,
+            "cohort_col": self.rsna_cohort_col,
+            "train_cohorts": self.rsna_train_cohorts,
+            "test_cohorts": self.rsna_test_cohorts,
+            "use_all_data": self.rsna_use_all_data,
             "split": self.train_split,
             "transform": transform,
             "data_pct": self.data_pct,
@@ -250,6 +265,11 @@ class DataModule(pl.LightningDataModule):
             "split_col": self.rsna_split_col,
             "train_split_value": self.rsna_train_split_value,
             "test_split_value": self.rsna_test_split_value,
+            "split_source": self.rsna_split_source,
+            "cohort_col": self.rsna_cohort_col,
+            "train_cohorts": self.rsna_train_cohorts,
+            "test_cohorts": self.rsna_test_cohorts,
+            "use_all_data": self.rsna_use_all_data,
             "split": self.valid_split,
             "transform": transform,
             "data_pct": self.data_pct,
@@ -314,6 +334,11 @@ class DataModule(pl.LightningDataModule):
             "split_col": self.rsna_split_col,
             "train_split_value": self.rsna_train_split_value,
             "test_split_value": self.rsna_test_split_value,
+            "split_source": self.rsna_split_source,
+            "cohort_col": self.rsna_cohort_col,
+            "train_cohorts": self.rsna_train_cohorts,
+            "test_cohorts": self.rsna_test_cohorts,
+            "use_all_data": self.rsna_use_all_data,
             "split": self.test_split,
             "transform": transform,
             "data_pct": self.data_pct,
