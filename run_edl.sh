@@ -6,10 +6,10 @@ set -euo pipefail
 # Mirrors run.sh data pipeline but uses EDL model instead of vanilla GLAM
 # ===========================================================================
 
-GPU_ID=0
+GPU_ID=2
 MAX_EPOCHS=25
 WARM_UP=1
-NUM_GPUS=2
+NUM_GPUS=1
 BATCH_SIZE=16
 NUM_WORKERS=4
 # Windows下建议 num_workers=0
