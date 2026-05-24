@@ -1,7 +1,7 @@
 ﻿#!/bin/bash
 set -euo pipefail
 
-GPU_ID=0
+GPU_ID=2
 #指定GPU
 MAX_EPOCHS=25
 #指定每一折训练的epoch
@@ -17,8 +17,10 @@ LEARNING_RATE=1e-4
 # 早停策略配置
 EARLY_STOP=1
 #是否启用早停（1=启用，0=禁用）
-EARLY_STOP_PATIENCE=5
+EARLY_STOP_PATIENCE=3
 #早停耐心轮数，即验证指标连续多少个epoch没有改善后停止训练
+BALANCE_TRAINING=0
+#是否启用训练集重采样（1=启用，0=禁用），默认与run_edl.sh保持一致
 
 OUTPUT_DIR="outputs"
 
@@ -29,9 +31,9 @@ LLM_TYPE="bert"
 IMG_SIZE=336
 CROP_SIZE=336
 
-CSV_PATH="/opt/localdata/Data/dh/dh_preprocessed/hjj_images/embed_data_testcohort_enriched.csv"
+CSV_PATH="/home/dhao4/workspace/hjj_workspace/data/data.csv"
 #csv文件地址
-IMG_ROOT="/opt/localdata/Data/dh/dh_preprocessed/hjj_images/images_png"
+IMG_ROOT="/home/dhao4/workspace/hjj_workspace/data/images_png"
 #图片地址
 PATH_PATTERN="{pid}/{iid}"
 
@@ -48,7 +50,7 @@ TEST_COHORTS="9-10"
 OUTPUT_SPLIT_COL="split"
 
 PRETRAINED_ENCODER="$(cd "$(dirname "$0")" && pwd)/pretrain_model/last.ckpt"
-NUM_FOLDS=5
+NUM_FOLDS=0
 BASE_EXP_NAME="glam_kfold_ft"
 
 PRED_THRESHOLD=0.5
@@ -84,6 +86,11 @@ if [[ "${EARLY_STOP}" == "1" ]]; then
   EARLY_STOP_FLAG+=(--early_stop --early_stop_patience "${EARLY_STOP_PATIENCE}")
 fi
 
+BALANCE_TRAINING_FLAG=()
+if [[ "${BALANCE_TRAINING}" == "1" ]]; then
+  BALANCE_TRAINING_FLAG+=(--balance_training)
+fi
+
 echo "Root dir                : ${ROOT_DIR}"
 echo "GPU_ID                  : ${GPU_ID}"
 echo "CUDA_VISIBLE_DEVICES    : ${CUDA_VISIBLE_DEVICES}"
@@ -98,6 +105,7 @@ echo "MAX_EPOCHS              : ${MAX_EPOCHS}"
 echo "WARM_UP (epochs)        : ${WARM_UP}"
 echo "EARLY_STOP              : ${EARLY_STOP}"
 echo "EARLY_STOP_PATIENCE     : ${EARLY_STOP_PATIENCE}"
+echo "BALANCE_TRAINING        : ${BALANCE_TRAINING}"
 echo "RUN_OUTPUT_DIR          : ${RUN_OUTPUT_DIR}"
 echo "RESULTS_DIR             : ${RESULTS_DIR}"
 echo "FULL_REPORT_PATH        : ${FULL_REPORT_PATH}"
@@ -161,7 +169,7 @@ for ((FOLD=TRAIN_FOLD_START; FOLD<TRAIN_FOLD_END; FOLD++)); do
     --crop_size "${CROP_SIZE}" \
     --num_classes 1 \
     --weighted_binary \
-    --balance_training \
+    "${BALANCE_TRAINING_FLAG[@]}" \
     --split_source "${SPLIT_SOURCE}" \
     --rsna_cohort_col "${COHORT_COL}" \
     --train_cohorts "${TRAIN_COHORTS}" \
