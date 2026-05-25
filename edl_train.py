@@ -55,9 +55,32 @@ from dataset.pretrain_embed_dataset import multimodal_collate_fn
 from dataset.transforms import RSNAMammoTransform
 
 from edl_model import EDLModel
+from edl_loss import assert_kl_sanity
 from split_utils import build_output_split_series, build_split_metadata
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+class MinEpochEarlyStopping(EarlyStopping):
+    def __init__(self, min_epochs=0, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.min_epochs = int(min_epochs or 0)
+
+    def _run_early_stopping_check(self, trainer):
+        if self.min_epochs > 0 and (trainer.current_epoch + 1) < self.min_epochs:
+            return
+        return super()._run_early_stopping_check(trainer)
+
+
+class MinEpochModelCheckpoint(ModelCheckpoint):
+    def __init__(self, min_epochs=0, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.min_epochs = int(min_epochs or 0)
+
+    def _should_skip_saving_checkpoint(self, trainer):
+        if super()._should_skip_saving_checkpoint(trainer):
+            return True
+        return self.min_epochs > 0 and (trainer.current_epoch + 1) < self.min_epochs
 
 
 # ===========================================================================
@@ -92,22 +115,29 @@ def train_one_fold(args_dict, fold, ckpt_dir):
     _maybe_set_auto_pos_weight(args_dict, datamodule)
     model = EDLModel(**args_dict)
 
-    monitor = "val_AUROC"
+    monitor = args_dict.get("monitor_metric", "val_AUROC")
     mode = "max"
     callbacks = [
         LearningRateMonitor(logging_interval="epoch"),
-        ModelCheckpoint(
+        MinEpochModelCheckpoint(
             monitor=monitor, dirpath=ckpt_dir,
             save_last=True, mode=mode, save_top_k=2,
+            min_epochs=args_dict.get("early_stop_min_epochs", 0),
         ),
     ]
     if args_dict.get("early_stop", False):
-        callbacks.append(EarlyStopping(
+        callbacks.append(MinEpochEarlyStopping(
             monitor=monitor,
             patience=args_dict.get("early_stop_patience", 5),
             min_delta=args_dict.get("early_stop_min_delta", 0.0),
             mode=mode, verbose=True,
+            min_epochs=args_dict.get("early_stop_min_epochs", 0),
         ))
+        print(
+            f"### [EDL] Early stopping enabled: monitor={monitor}, mode={mode}, "
+            f"patience={args_dict.get('early_stop_patience', 5)}, "
+            f"min_epochs={args_dict.get('early_stop_min_epochs', 0)}"
+        )
 
     logger_dir = os.path.join(BASE_DIR, "logs")
     os.makedirs(logger_dir, exist_ok=True)
@@ -199,6 +229,7 @@ def generate_csvs(
     df, img_root, path_pattern, patient_col, image_col, label_col,
     split_col, cohort_col, split_source, train_split_value, test_split_value,
     train_cohorts, test_cohorts, output_split_col,
+    val_split, val_fraction, val_max_fraction, val_min_positive_patients, val_random_state,
     k_fold, fold_results, fold_ids, output_dir,
 ):
     """Generate per-fold and ensemble CSVs with evidence, alpha, prob, uncertainty."""
@@ -227,6 +258,11 @@ def generate_csvs(
         train_cohorts=train_cohorts,
         test_cohorts=test_cohorts,
         k_fold=k_fold,
+        val_split=val_split,
+        val_fraction=val_fraction,
+        val_max_fraction=val_max_fraction,
+        val_min_positive_patients=val_min_positive_patients,
+        val_random_state=val_random_state,
     )
     fold_assignment = split_metadata["fold_assignment"]
     base_split = split_metadata["base_split"]
@@ -338,7 +374,15 @@ def generate_csvs(
 
     # Report
     report_path = os.path.join(output_dir, "edl_eval_report.txt")
-    _write_report(report_path, fold_results, ensemble_probs, y_true_csv, fold_ids=fold_ids)
+    _write_report(
+        report_path,
+        fold_results,
+        ensemble_probs,
+        y_true_csv,
+        fold_ids=fold_ids,
+        ensemble_uncertainty=ensemble_uncertainty,
+        ensemble_evidence=ensemble_evidence,
+    )
     print(f"[INFO] Report saved to: {report_path}")
 
     return ensemble_csv_path
@@ -390,7 +434,39 @@ def _align_to_df(df_paths, pred_paths, evidence, probs, uncertainty, labels):
     }
 
 
-def _write_report(path, fold_results, ensemble_probs, y_true, fold_ids=None):
+def _write_distribution_diagnostics(f, probs, uncertainty=None, evidence=None, prefix=""):
+    pos_scores = np.asarray(probs)[:, 1]
+    prob_q = np.nanquantile(pos_scores, [0.0, 0.01, 0.05, 0.5, 0.95, 0.99, 1.0])
+    f.write(f"  {prefix}prob_1 quantiles [0,1,5,50,95,99,100]%: ")
+    f.write(", ".join(f"{v:.6f}" for v in prob_q) + "\n")
+    if uncertainty is not None:
+        unc = np.asarray(uncertainty, dtype=float)
+        unc_q = np.nanquantile(unc, [0.0, 0.01, 0.05, 0.5, 0.95, 0.99, 1.0])
+        f.write(f"  {prefix}uncertainty quantiles [0,1,5,50,95,99,100]%: ")
+        f.write(", ".join(f"{v:.6f}" for v in unc_q) + "\n")
+    if evidence is not None:
+        ev = np.asarray(evidence, dtype=float)
+        strength = ev.sum(axis=1) + ev.shape[1]
+        strength_q = np.nanquantile(strength, [0.0, 0.01, 0.05, 0.5, 0.95, 0.99, 1.0])
+        f.write(f"  {prefix}sum(alpha) quantiles [0,1,5,50,95,99,100]%: ")
+        f.write(", ".join(f"{v:.6f}" for v in strength_q) + "\n")
+    if float(np.nanmax(pos_scores) - np.nanmin(pos_scores)) < 1e-3:
+        f.write(f"  {prefix}WARNING: prob_1 range is very narrow; predictions may be collapsed.\n")
+    if uncertainty is not None:
+        unc = np.asarray(uncertainty, dtype=float)
+        if float(np.nanmax(unc) - np.nanmin(unc)) < 1e-3:
+            f.write(f"  {prefix}WARNING: uncertainty range is very narrow; uncertainty may be collapsed.\n")
+
+
+def _write_report(
+    path,
+    fold_results,
+    ensemble_probs,
+    y_true,
+    fold_ids=None,
+    ensemble_uncertainty=None,
+    ensemble_evidence=None,
+):
     """Write a text report with per-fold and ensemble metrics."""
     if fold_ids is None:
         fold_ids = list(range(len(fold_results)))
@@ -417,7 +493,14 @@ def _write_report(path, fold_results, ensemble_probs, y_true, fold_ids=None):
             f.write(f"  Accuracy: {acc:.6f}\n")
             f.write(f"  BACC:     {bacc:.6f}\n")
             f.write(f"  F1:       {f1:.6f}\n")
-            f.write(f"  Mean uncertainty: {result['uncertainty'].mean():.6f}\n\n")
+            f.write(f"  Mean uncertainty: {result['uncertainty'].mean():.6f}\n")
+            _write_distribution_diagnostics(
+                f,
+                probs,
+                uncertainty=result.get("uncertainty"),
+                evidence=result.get("evidence"),
+            )
+            f.write("\n")
 
         ens_pos = ensemble_probs[:, 1]
         ens_pred = (ens_pos >= 0.5).astype(int)
@@ -433,7 +516,14 @@ def _write_report(path, fold_results, ensemble_probs, y_true, fold_ids=None):
         f.write(f"  AUC:      {ens_auc:.6f}\n")
         f.write(f"  Accuracy: {ens_acc:.6f}\n")
         f.write(f"  BACC:     {ens_bacc:.6f}\n")
-        f.write(f"  F1:       {ens_f1:.6f}\n\n")
+        f.write(f"  F1:       {ens_f1:.6f}\n")
+        _write_distribution_diagnostics(
+            f,
+            ensemble_probs,
+            uncertainty=ensemble_uncertainty,
+            evidence=ensemble_evidence,
+        )
+        f.write("\n")
 
 
 # ===========================================================================
@@ -470,6 +560,11 @@ def _build_datamodule(args_dict, split=None):
         rsna_cohort_col=args_dict.get("cohort_col", "cohert_num"),
         rsna_train_cohorts=args_dict.get("train_cohorts", "1-8"),
         rsna_test_cohorts=args_dict.get("test_cohorts", "9-10"),
+        rsna_val_split=args_dict.get("rsna_val_split", False),
+        rsna_val_fraction=args_dict.get("rsna_val_fraction", 0.15),
+        rsna_val_max_fraction=args_dict.get("rsna_val_max_fraction", 0.25),
+        rsna_val_min_positive_patients=args_dict.get("rsna_val_min_positive_patients", 3),
+        rsna_val_random_state=args_dict.get("rsna_val_random_state", 42),
         rsna_use_all_data=args_dict.get("rsna_use_all_data", False),
         balance_training=args_dict.get("balance_training", False),
         pred_only=False,
@@ -529,6 +624,11 @@ def parse_args():
     parser.add_argument("--train_cohorts", type=str, default="1-8")
     parser.add_argument("--test_cohorts", type=str, default="9-10")
     parser.add_argument("--output_split_col", type=str, default="split")
+    parser.add_argument("--rsna_val_split", action="store_true")
+    parser.add_argument("--rsna_val_fraction", type=float, default=0.15)
+    parser.add_argument("--rsna_val_max_fraction", type=float, default=0.25)
+    parser.add_argument("--rsna_val_min_positive_patients", type=int, default=3)
+    parser.add_argument("--rsna_val_random_state", type=int, default=42)
 
     # Model
     parser.add_argument("--img_encoder", type=str, default="dinov2_vitb14_reg")
@@ -578,6 +678,8 @@ def parse_args():
     parser.add_argument("--early_stop", action="store_true")
     parser.add_argument("--early_stop_patience", type=int, default=5)
     parser.add_argument("--early_stop_min_delta", type=float, default=0.0)
+    parser.add_argument("--early_stop_min_epochs", type=int, default=0)
+    parser.add_argument("--monitor_metric", type=str, default="val_AUROC")
 
     # Image size
     parser.add_argument("--img_size", type=int, default=336)
@@ -636,6 +738,8 @@ def main():
 
     seed_everything(args.seed)
     torch.set_float32_matmul_precision("high")
+    assert_kl_sanity()
+    print("### [EDL] KL sanity check passed: Dir(1)||Dir(1)=0 and non-uniform KL>0")
 
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     if args.output_dir is None:
@@ -669,6 +773,12 @@ def main():
     print(f"  ANNEALING_STEP:       {args.annealing_step}")
     print(f"  LAMBDA_KL:            {args.lambda_kl}")
     print(f"  POS_WEIGHT:           {args.pos_weight if args.pos_weight is not None else 'auto per fold'}")
+    print(f"  MONITOR_METRIC:       {args.monitor_metric}")
+    print(f"  EARLY_STOP_MIN_EPOCHS:{args.early_stop_min_epochs}")
+    print(f"  VAL_SPLIT:            {args.rsna_val_split}")
+    print(f"  VAL_FRACTION:         {args.rsna_val_fraction}")
+    print(f"  VAL_MAX_FRACTION:     {args.rsna_val_max_fraction}")
+    print(f"  VAL_MIN_POS_PATIENTS: {args.rsna_val_min_positive_patients}")
     print(f"  OUTPUT_DIR:           {output_dir}")
     print(f"{'='*60}\n")
 
@@ -698,6 +808,11 @@ def main():
     args_dict["cohort_col"] = args.cohort_col
     args_dict["train_cohorts"] = args.train_cohorts
     args_dict["test_cohorts"] = args.test_cohorts
+    args_dict["rsna_val_split"] = args.rsna_val_split
+    args_dict["rsna_val_fraction"] = args.rsna_val_fraction
+    args_dict["rsna_val_max_fraction"] = args.rsna_val_max_fraction
+    args_dict["rsna_val_min_positive_patients"] = args.rsna_val_min_positive_patients
+    args_dict["rsna_val_random_state"] = args.rsna_val_random_state
 
     # =========================================================================
     # Stage 1: K-fold training
@@ -742,6 +857,11 @@ def main():
         train_cohorts=args.train_cohorts,
         test_cohorts=args.test_cohorts,
         output_split_col=args.output_split_col,
+        val_split=args.rsna_val_split,
+        val_fraction=args.rsna_val_fraction,
+        val_max_fraction=args.rsna_val_max_fraction,
+        val_min_positive_patients=args.rsna_val_min_positive_patients,
+        val_random_state=args.rsna_val_random_state,
         k_fold=args.k_fold, fold_results=fold_results,
         fold_ids=folds_to_run,
         output_dir=per_model_dir,

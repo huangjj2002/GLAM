@@ -45,6 +45,28 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 os.environ["WANDB_START_METHOD"] = "thread"
 
 
+class MinEpochEarlyStopping(EarlyStopping):
+    def __init__(self, min_epochs=0, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.min_epochs = int(min_epochs or 0)
+
+    def _run_early_stopping_check(self, trainer):
+        if self.min_epochs > 0 and (trainer.current_epoch + 1) < self.min_epochs:
+            return
+        return super()._run_early_stopping_check(trainer)
+
+
+class MinEpochModelCheckpoint(ModelCheckpoint):
+    def __init__(self, min_epochs=0, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.min_epochs = int(min_epochs or 0)
+
+    def _should_skip_saving_checkpoint(self, trainer):
+        if super()._should_skip_saving_checkpoint(trainer):
+            return True
+        return self.min_epochs > 0 and (trainer.current_epoch + 1) < self.min_epochs
+
+
 @torch.no_grad()
 def concat_all_gather(tensor):
     """
@@ -65,11 +87,14 @@ def train(args, model, datamodule):
     extension += f"_{args.experiment_name}"
     ckpt_dir = os.path.join(BASE_DIR, f"logs/ckpts/GLAM/{extension}")
     os.makedirs(ckpt_dir, exist_ok=True)
-    monitor = "val_loss"
+    monitor = getattr(args, "monitor_metric", None)
     mode = "min"
-    if args.img_cls_ft and args.rsna_mammo and (not args.multi_label):
-        # For RSNA binary fine-tuning, AUROC is the primary metric.
-        monitor = "val_AUROC"
+    if not monitor:
+        monitor = "val_loss"
+        if args.img_cls_ft and args.rsna_mammo and (not args.multi_label):
+            monitor = "val_AUROC"
+            mode = "max"
+    elif monitor != "val_loss":
         mode = "max"
     print(f"### Checkpoint monitor: {monitor} ({mode})")
     callbacks = [
@@ -77,35 +102,42 @@ def train(args, model, datamodule):
     ]
     if args.save_last_k > 1:
         callbacks.append(
-            ModelCheckpoint(
+            MinEpochModelCheckpoint(
                 monitor="epoch",
                 dirpath=ckpt_dir,
                 save_last=True,
                 mode="max",
                 save_top_k=args.save_last_k,
+                min_epochs=getattr(args, "early_stop_min_epochs", 0),
             )
         )
     else:
         callbacks.append(
-            ModelCheckpoint(
+            MinEpochModelCheckpoint(
                 monitor=monitor,
                 dirpath=ckpt_dir,
                 save_last=True,
                 mode=mode,
                 save_top_k=2,
+                min_epochs=getattr(args, "early_stop_min_epochs", 0),
             )
         )
     # Early stopping callback
     if getattr(args, "early_stop", False):
-        early_stop_callback = EarlyStopping(
+        early_stop_callback = MinEpochEarlyStopping(
             monitor=monitor,
             patience=args.early_stop_patience,
             min_delta=args.early_stop_min_delta,
             mode=mode,
             verbose=True,
+            min_epochs=getattr(args, "early_stop_min_epochs", 0),
         )
         callbacks.append(early_stop_callback)
-        print(f"### Early stopping enabled: monitor={monitor}, mode={mode}, patience={args.early_stop_patience}, min_delta={args.early_stop_min_delta}")
+        print(
+            f"### Early stopping enabled: monitor={monitor}, mode={mode}, "
+            f"patience={args.early_stop_patience}, min_delta={args.early_stop_min_delta}, "
+            f"min_epochs={getattr(args, 'early_stop_min_epochs', 0)}"
+        )
     logger_dir = os.path.join(BASE_DIR, f"./logs")
     os.makedirs(logger_dir, exist_ok=True)
     if args.img_cls_ft:
@@ -345,6 +377,11 @@ def cli_main():
         rsna_cohort_col=args.rsna_cohort_col,
         rsna_train_cohorts=args.train_cohorts,
         rsna_test_cohorts=args.test_cohorts,
+        rsna_val_split=args.rsna_val_split,
+        rsna_val_fraction=args.rsna_val_fraction,
+        rsna_val_max_fraction=args.rsna_val_max_fraction,
+        rsna_val_min_positive_patients=args.rsna_val_min_positive_patients,
+        rsna_val_random_state=args.rsna_val_random_state,
         rsna_use_all_data=args.rsna_use_all_data,
     )
 

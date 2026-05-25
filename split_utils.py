@@ -1,3 +1,5 @@
+import math
+
 import pandas as pd
 from sklearn.model_selection import StratifiedGroupKFold
 
@@ -88,6 +90,111 @@ def assign_patient_folds(df, eligible_mask, patient_col, label_col, k_fold, rand
     return fold_assignment
 
 
+def assign_patient_validation_split(
+    df,
+    eligible_mask,
+    patient_col,
+    label_col,
+    val_fraction=0.15,
+    val_max_fraction=0.25,
+    val_min_positive_patients=3,
+    random_state=42,
+):
+    val_mask = pd.Series(False, index=df.index)
+    val_fraction = float(val_fraction)
+    val_max_fraction = float(val_max_fraction)
+    val_min_positive_patients = int(val_min_positive_patients)
+    if val_fraction <= 0:
+        return val_mask, 0.0
+    if val_fraction > val_max_fraction:
+        raise ValueError(
+            f"val_fraction ({val_fraction}) cannot exceed val_max_fraction ({val_max_fraction})."
+        )
+
+    pool_df = df.loc[eligible_mask].copy()
+    if pool_df.empty:
+        raise ValueError("Cannot create validation split because the training pool is empty.")
+
+    patient_labels = (
+        pool_df.groupby(pool_df[patient_col].astype(str))[label_col]
+        .max()
+        .astype(int)
+    )
+    pos_pids = sorted(patient_labels[patient_labels == 1].index.tolist())
+    neg_pids = sorted(patient_labels[patient_labels == 0].index.tolist())
+    total_patients = len(patient_labels)
+    total_pos = len(pos_pids)
+    total_neg = len(neg_pids)
+
+    if total_pos <= val_min_positive_patients:
+        raise ValueError(
+            "Not enough positive patients to create validation split while leaving "
+            f"positives for training: positive_patients={total_pos}, "
+            f"val_min_positive_patients={val_min_positive_patients}."
+        )
+    if total_neg < 2:
+        raise ValueError(
+            "Not enough negative patients to create validation split while leaving "
+            f"negatives for training: negative_patients={total_neg}."
+        )
+
+    min_val_patients = val_min_positive_patients + 1
+    if min_val_patients / total_patients > val_max_fraction:
+        raise ValueError(
+            "Validation constraints exceed max fraction: "
+            f"min_val_patients={min_val_patients}, total_patients={total_patients}, "
+            f"val_max_fraction={val_max_fraction}."
+        )
+
+    val_fraction = max(0.0, val_fraction)
+
+    chosen_pos_n = None
+    chosen_neg_n = None
+    chosen_fraction = None
+    fraction = val_fraction
+    while fraction <= val_max_fraction + 1e-12:
+        target_total = max(min_val_patients, int(math.ceil(fraction * total_patients)))
+        target_total = min(target_total, total_patients - 2)
+
+        target_pos = max(val_min_positive_patients, int(round(fraction * total_pos)))
+        target_pos = min(target_pos, total_pos - 1)
+
+        target_neg = max(1, target_total - target_pos)
+        target_neg = min(target_neg, total_neg - 1)
+
+        actual_total = target_pos + target_neg
+        actual_fraction = actual_total / total_patients
+        if (
+            target_pos >= val_min_positive_patients
+            and target_neg >= 1
+            and actual_fraction <= val_max_fraction + 1e-12
+        ):
+            chosen_pos_n = target_pos
+            chosen_neg_n = target_neg
+            chosen_fraction = actual_fraction
+            break
+        fraction += 0.01
+
+    if chosen_pos_n is None or chosen_neg_n is None:
+        raise ValueError(
+            "Failed to create validation split satisfying constraints: "
+            f"total_patients={total_patients}, positive_patients={total_pos}, "
+            f"negative_patients={total_neg}, val_fraction={val_fraction}, "
+            f"val_max_fraction={val_max_fraction}, "
+            f"val_min_positive_patients={val_min_positive_patients}."
+        )
+
+    pos_sample = pd.Series(pos_pids).sample(
+        n=chosen_pos_n, random_state=random_state, replace=False
+    )
+    neg_sample = pd.Series(neg_pids).sample(
+        n=chosen_neg_n, random_state=random_state + 1, replace=False
+    )
+    val_pids = set(pos_sample.tolist()) | set(neg_sample.tolist())
+    val_mask.loc[eligible_mask & df[patient_col].astype(str).isin(val_pids)] = True
+    return val_mask, chosen_fraction
+
+
 def build_split_metadata(
     df,
     patient_col,
@@ -101,14 +208,21 @@ def build_split_metadata(
     test_cohorts="9-10",
     k_fold=0,
     random_state=42,
+    val_split=False,
+    val_fraction=0.15,
+    val_max_fraction=0.25,
+    val_min_positive_patients=3,
+    val_random_state=42,
     strict_unassigned=True,
 ):
     metadata = {
         "actual_cohort_col": None,
         "base_split": pd.Series("train", index=df.index, dtype=object),
         "train_mask": pd.Series(True, index=df.index),
+        "val_mask": pd.Series(False, index=df.index),
         "test_mask": pd.Series(False, index=df.index),
         "fold_assignment": pd.Series(-1, index=df.index, dtype=int),
+        "actual_val_fraction": 0.0,
     }
 
     if split_source == "split":
@@ -128,11 +242,28 @@ def build_split_metadata(
             )
         base_split = pd.Series("train", index=df.index, dtype=object)
         base_split.loc[test_mask] = "test"
+        val_mask = pd.Series(False, index=df.index)
+        actual_val_fraction = 0.0
+        if val_split and k_fold == 0:
+            val_mask, actual_val_fraction = assign_patient_validation_split(
+                df,
+                train_mask,
+                patient_col,
+                label_col,
+                val_fraction=val_fraction,
+                val_max_fraction=val_max_fraction,
+                val_min_positive_patients=val_min_positive_patients,
+                random_state=val_random_state,
+            )
+            base_split.loc[val_mask] = "val"
+            train_mask = train_mask & ~val_mask
         metadata.update(
             {
                 "base_split": base_split,
                 "train_mask": train_mask,
+                "val_mask": val_mask,
                 "test_mask": test_mask,
+                "actual_val_fraction": actual_val_fraction,
                 "fold_assignment": assign_patient_folds(
                     df,
                     train_mask,
@@ -176,13 +307,30 @@ def build_split_metadata(
 
     base_split = pd.Series("train", index=df.index, dtype=object)
     base_split.loc[test_mask] = "test"
+    val_mask = pd.Series(False, index=df.index)
+    actual_val_fraction = 0.0
+    if val_split and k_fold == 0:
+        val_mask, actual_val_fraction = assign_patient_validation_split(
+            df,
+            train_mask,
+            patient_col,
+            label_col,
+            val_fraction=val_fraction,
+            val_max_fraction=val_max_fraction,
+            val_min_positive_patients=val_min_positive_patients,
+            random_state=val_random_state,
+        )
+        base_split.loc[val_mask] = "val"
+        train_mask = train_mask & ~val_mask
 
     metadata.update(
         {
             "actual_cohort_col": actual_cohort_col,
             "base_split": base_split,
             "train_mask": train_mask,
+            "val_mask": val_mask,
             "test_mask": test_mask,
+            "actual_val_fraction": actual_val_fraction,
             "fold_assignment": assign_patient_folds(
                 df,
                 train_mask,

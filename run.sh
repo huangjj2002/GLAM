@@ -19,8 +19,14 @@ EARLY_STOP=1
 #是否启用早停（1=启用，0=禁用）
 EARLY_STOP_PATIENCE=3
 #早停耐心轮数，即验证指标连续多少个epoch没有改善后停止训练
+EARLY_STOP_MIN_EPOCHS=0
+#早停最小训练epoch数；原模型默认不强制，EDL脚本默认会设置更高
+MONITOR_METRIC="val_AUROC"
+#checkpoint与早停监控指标
 BALANCE_TRAINING=0
 #是否启用训练集重采样（1=启用，0=禁用），默认与run_edl.sh保持一致
+BCE_POS_WEIGHT=""
+#空值表示自动按训练split的neg/pos计算
 
 OUTPUT_DIR="outputs"
 
@@ -48,6 +54,11 @@ TEST_SPLIT_VALUE="test"
 TRAIN_COHORTS="1-8"
 TEST_COHORTS="9-10"
 OUTPUT_SPLIT_COL="split"
+VAL_SPLIT=1
+VAL_FRACTION=0.15
+VAL_MAX_FRACTION=0.25
+VAL_MIN_POSITIVE_PATIENTS=3
+VAL_RANDOM_STATE=42
 
 PRETRAINED_ENCODER="$(cd "$(dirname "$0")" && pwd)/pretrain_model/last.ckpt"
 NUM_FOLDS=0
@@ -83,12 +94,24 @@ fi
 
 EARLY_STOP_FLAG=()
 if [[ "${EARLY_STOP}" == "1" ]]; then
-  EARLY_STOP_FLAG+=(--early_stop --early_stop_patience "${EARLY_STOP_PATIENCE}")
+  EARLY_STOP_FLAG+=(--early_stop --early_stop_patience "${EARLY_STOP_PATIENCE}" --early_stop_min_epochs "${EARLY_STOP_MIN_EPOCHS}")
 fi
 
 BALANCE_TRAINING_FLAG=()
 if [[ "${BALANCE_TRAINING}" == "1" ]]; then
   BALANCE_TRAINING_FLAG+=(--balance_training)
+fi
+
+POS_WEIGHT_FLAG=()
+if [[ -n "${BCE_POS_WEIGHT}" ]]; then
+  POS_WEIGHT_FLAG+=(--pos_weight "${BCE_POS_WEIGHT}")
+fi
+
+VAL_SPLIT_FLAG=()
+FULL_EVAL_VAL_SPLIT_FLAG=()
+if [[ "${VAL_SPLIT}" == "1" ]]; then
+  VAL_SPLIT_FLAG+=(--rsna_val_split)
+  FULL_EVAL_VAL_SPLIT_FLAG+=(--val_split)
 fi
 
 echo "Root dir                : ${ROOT_DIR}"
@@ -105,7 +128,15 @@ echo "MAX_EPOCHS              : ${MAX_EPOCHS}"
 echo "WARM_UP (epochs)        : ${WARM_UP}"
 echo "EARLY_STOP              : ${EARLY_STOP}"
 echo "EARLY_STOP_PATIENCE     : ${EARLY_STOP_PATIENCE}"
+echo "EARLY_STOP_MIN_EPOCHS   : ${EARLY_STOP_MIN_EPOCHS}"
+echo "MONITOR_METRIC          : ${MONITOR_METRIC}"
 echo "BALANCE_TRAINING        : ${BALANCE_TRAINING}"
+echo "BCE_POS_WEIGHT          : ${BCE_POS_WEIGHT:-auto per fold}"
+echo "VAL_SPLIT               : ${VAL_SPLIT}"
+echo "VAL_FRACTION            : ${VAL_FRACTION}"
+echo "VAL_MAX_FRACTION        : ${VAL_MAX_FRACTION}"
+echo "VAL_MIN_POS_PATIENTS    : ${VAL_MIN_POSITIVE_PATIENTS}"
+echo "VAL_RANDOM_STATE        : ${VAL_RANDOM_STATE}"
 echo "RUN_OUTPUT_DIR          : ${RUN_OUTPUT_DIR}"
 echo "RESULTS_DIR             : ${RESULTS_DIR}"
 echo "FULL_REPORT_PATH        : ${FULL_REPORT_PATH}"
@@ -165,11 +196,18 @@ for ((FOLD=TRAIN_FOLD_START; FOLD<TRAIN_FOLD_END; FOLD++)); do
     --learning_rate "${LEARNING_RATE}" \
     --max_epochs "${MAX_EPOCHS}" \
     --warm_up "${WARM_UP}" \
+    --monitor_metric "${MONITOR_METRIC}" \
     --img_size "${IMG_SIZE}" \
     --crop_size "${CROP_SIZE}" \
     --num_classes 1 \
     --weighted_binary \
+    "${POS_WEIGHT_FLAG[@]}" \
     "${BALANCE_TRAINING_FLAG[@]}" \
+    "${VAL_SPLIT_FLAG[@]}" \
+    --rsna_val_fraction "${VAL_FRACTION}" \
+    --rsna_val_max_fraction "${VAL_MAX_FRACTION}" \
+    --rsna_val_min_positive_patients "${VAL_MIN_POSITIVE_PATIENTS}" \
+    --rsna_val_random_state "${VAL_RANDOM_STATE}" \
     --split_source "${SPLIT_SOURCE}" \
     --rsna_cohort_col "${COHORT_COL}" \
     --train_cohorts "${TRAIN_COHORTS}" \
@@ -242,6 +280,7 @@ for ((FOLD=TRAIN_FOLD_START; FOLD<TRAIN_FOLD_END; FOLD++)); do
     --pretrained_model "${CKPT_PATH}" \
     --num_classes 1 \
     --weighted_binary \
+    "${POS_WEIGHT_FLAG[@]}" \
     --split_source "${SPLIT_SOURCE}" \
     --rsna_cohort_col "${COHORT_COL}" \
     --train_cohorts "${TRAIN_COHORTS}" \
@@ -276,6 +315,11 @@ python -u full_eval_5fold.py \
   --train_split_value "${TRAIN_SPLIT_VALUE}" \
   --train_cohorts "${TRAIN_COHORTS}" \
   --test_cohorts "${TEST_COHORTS}" \
+  "${FULL_EVAL_VAL_SPLIT_FLAG[@]}" \
+  --val_fraction "${VAL_FRACTION}" \
+  --val_max_fraction "${VAL_MAX_FRACTION}" \
+  --val_min_positive_patients "${VAL_MIN_POSITIVE_PATIENTS}" \
+  --val_random_state "${VAL_RANDOM_STATE}" \
   --output_split_col "${OUTPUT_SPLIT_COL}" \
   --k_fold "${NUM_FOLDS}" \
   --threshold "${PRED_THRESHOLD}" \

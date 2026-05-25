@@ -55,6 +55,11 @@ class DataModule(pl.LightningDataModule):
         rsna_cohort_col='cohert_num',
         rsna_train_cohorts='1-8',
         rsna_test_cohorts='9-10',
+        rsna_val_split=False,
+        rsna_val_fraction=0.15,
+        rsna_val_max_fraction=0.25,
+        rsna_val_min_positive_patients=3,
+        rsna_val_random_state=42,
         rsna_use_all_data=False,
         bootstrap_test=False,
         aug_text=False,
@@ -121,6 +126,11 @@ class DataModule(pl.LightningDataModule):
         self.rsna_cohort_col = rsna_cohort_col
         self.rsna_train_cohorts = rsna_train_cohorts
         self.rsna_test_cohorts = rsna_test_cohorts
+        self.rsna_val_split = rsna_val_split
+        self.rsna_val_fraction = rsna_val_fraction
+        self.rsna_val_max_fraction = rsna_val_max_fraction
+        self.rsna_val_min_positive_patients = rsna_val_min_positive_patients
+        self.rsna_val_random_state = rsna_val_random_state
         self.rsna_use_all_data = rsna_use_all_data
         self.bootstrap_test = bootstrap_test
         self.aug_text = aug_text
@@ -166,6 +176,11 @@ class DataModule(pl.LightningDataModule):
             "cohort_col": self.rsna_cohort_col,
             "train_cohorts": self.rsna_train_cohorts,
             "test_cohorts": self.rsna_test_cohorts,
+            "val_split": self.rsna_val_split,
+            "val_fraction": self.rsna_val_fraction,
+            "val_max_fraction": self.rsna_val_max_fraction,
+            "val_min_positive_patients": self.rsna_val_min_positive_patients,
+            "val_random_state": self.rsna_val_random_state,
             "use_all_data": self.rsna_use_all_data,
             "split": self.train_split,
             "transform": transform,
@@ -269,6 +284,11 @@ class DataModule(pl.LightningDataModule):
             "cohort_col": self.rsna_cohort_col,
             "train_cohorts": self.rsna_train_cohorts,
             "test_cohorts": self.rsna_test_cohorts,
+            "val_split": self.rsna_val_split,
+            "val_fraction": self.rsna_val_fraction,
+            "val_max_fraction": self.rsna_val_max_fraction,
+            "val_min_positive_patients": self.rsna_val_min_positive_patients,
+            "val_random_state": self.rsna_val_random_state,
             "use_all_data": self.rsna_use_all_data,
             "split": self.valid_split,
             "transform": transform,
@@ -338,6 +358,11 @@ class DataModule(pl.LightningDataModule):
             "cohort_col": self.rsna_cohort_col,
             "train_cohorts": self.rsna_train_cohorts,
             "test_cohorts": self.rsna_test_cohorts,
+            "val_split": self.rsna_val_split,
+            "val_fraction": self.rsna_val_fraction,
+            "val_max_fraction": self.rsna_val_max_fraction,
+            "val_min_positive_patients": self.rsna_val_min_positive_patients,
+            "val_random_state": self.rsna_val_random_state,
             "use_all_data": self.rsna_use_all_data,
             "split": self.test_split,
             "transform": transform,

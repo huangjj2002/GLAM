@@ -315,6 +315,11 @@ class RSNAMammo(torch.utils.data.Dataset):
         cohort_col="cohert_num",
         train_cohorts="1-8",
         test_cohorts="9-10",
+        val_split=False,
+        val_fraction=0.15,
+        val_max_fraction=0.25,
+        val_min_positive_patients=3,
+        val_random_state=42,
         use_all_data=False,
         *args,
         **kwargs,
@@ -383,8 +388,9 @@ class RSNAMammo(torch.utils.data.Dataset):
             _image_col = image_col if image_col in self.df.columns else "image_id"
 
             if not use_all_data:
+                full_df = self.df
                 split_metadata = build_split_metadata(
-                    self.df,
+                    full_df,
                     patient_col=_patient_col,
                     label_col=_label_col,
                     split_source=split_source,
@@ -395,10 +401,16 @@ class RSNAMammo(torch.utils.data.Dataset):
                     train_cohorts=train_cohorts,
                     test_cohorts=test_cohorts,
                     k_fold=k_fold,
+                    val_split=val_split,
+                    val_fraction=val_fraction,
+                    val_max_fraction=val_max_fraction,
+                    val_min_positive_patients=val_min_positive_patients,
+                    val_random_state=val_random_state,
                 )
                 self.df["_fold_assignment"] = split_metadata["fold_assignment"].values
 
                 train_mask = split_metadata["train_mask"]
+                val_mask = split_metadata["val_mask"]
                 test_mask = split_metadata["test_mask"]
 
                 if k_fold and k_fold > 0:
@@ -409,8 +421,42 @@ class RSNAMammo(torch.utils.data.Dataset):
                 else:
                     if split == "train":
                         self.df = self.df.loc[train_mask].copy()
+                    elif split == "valid":
+                        self.df = self.df.loc[val_mask].copy()
                     else:
                         self.df = self.df.loc[test_mask].copy()
+
+                if val_split and k_fold == 0:
+                    val_pid_labels = (
+                        full_df.loc[val_mask]
+                        .groupby(full_df.loc[val_mask, _patient_col].astype(str))[_label_col]
+                        .max()
+                        .astype(int)
+                    )
+                    train_pid_labels = (
+                        full_df.loc[train_mask]
+                        .groupby(full_df.loc[train_mask, _patient_col].astype(str))[_label_col]
+                        .max()
+                        .astype(int)
+                    )
+                    print(
+                        "### Patient-level validation split "
+                        f"(fraction={split_metadata['actual_val_fraction']:.4f}, "
+                        f"max={val_max_fraction:.4f})",
+                        flush=True,
+                    )
+                    print(
+                        f"###   Train patients: {len(train_pid_labels)}, "
+                        f"cancer patients: {int(train_pid_labels.sum())}, "
+                        f"no-cancer patients: {int((train_pid_labels == 0).sum())}",
+                        flush=True,
+                    )
+                    print(
+                        f"###   Val   patients: {len(val_pid_labels)}, "
+                        f"cancer patients: {int(val_pid_labels.sum())}, "
+                        f"no-cancer patients: {int((val_pid_labels == 0).sum())}",
+                        flush=True,
+                    )
 
             _data_root = img_root if img_root is not None else RSNA_MAMMO_JPEG_DIR
             _path_pattern = path_pattern if path_pattern is not None else "{pid}/{iid}"

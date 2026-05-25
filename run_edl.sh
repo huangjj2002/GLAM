@@ -19,6 +19,8 @@ LEARNING_RATE=1e-4
 # 早停策略
 EARLY_STOP=1
 EARLY_STOP_PATIENCE=3
+EARLY_STOP_MIN_EPOCHS=12
+MONITOR_METRIC="val_AUROC"
 
 OUTPUT_DIR="outputs"
 
@@ -57,10 +59,15 @@ TEST_SPLIT_VALUE="test"
 TRAIN_COHORTS="1-8"
 TEST_COHORTS="9-10"
 OUTPUT_SPLIT_COL="split"
+VAL_SPLIT=1
+VAL_FRACTION=0.15
+VAL_MAX_FRACTION=0.25
+VAL_MIN_POSITIVE_PATIENTS=3
+VAL_RANDOM_STATE=42
 
 PRETRAINED_MODEL="$(cd "$(dirname "$0")" && pwd)/pretrain_model/last.ckpt"
 NUM_FOLDS=0
-FOLDS_TO_RUN="0"
+FOLDS_TO_RUN=""
 BASE_EXP_NAME="edl_kfold_ft"
 
 export WANDB_MODE="offline"
@@ -90,7 +97,7 @@ fi
 
 EARLY_STOP_FLAG=()
 if [[ "${EARLY_STOP}" == "1" ]]; then
-  EARLY_STOP_FLAG+=(--early_stop --early_stop_patience "${EARLY_STOP_PATIENCE}")
+  EARLY_STOP_FLAG+=(--early_stop --early_stop_patience "${EARLY_STOP_PATIENCE}" --early_stop_min_epochs "${EARLY_STOP_MIN_EPOCHS}")
 fi
 
 FREEZE_BACKBONE_FLAG=()
@@ -108,6 +115,16 @@ if [[ "${BALANCE_TRAINING}" == "1" ]]; then
   BALANCE_TRAINING_FLAG+=(--balance_training)
 fi
 
+VAL_SPLIT_FLAG=()
+if [[ "${VAL_SPLIT}" == "1" ]]; then
+  VAL_SPLIT_FLAG+=(--rsna_val_split)
+fi
+
+FOLDS_TO_RUN_FLAG=()
+if [[ -n "${FOLDS_TO_RUN}" ]]; then
+  FOLDS_TO_RUN_FLAG+=(--folds_to_run "${FOLDS_TO_RUN}")
+fi
+
 echo "Root dir                : ${ROOT_DIR}"
 echo "GPU_ID                  : ${GPU_ID}"
 echo "CUDA_VISIBLE_DEVICES    : ${CUDA_VISIBLE_DEVICES}"
@@ -122,6 +139,8 @@ echo "MAX_EPOCHS              : ${MAX_EPOCHS}"
 echo "WARM_UP (epochs)        : ${WARM_UP}"
 echo "EARLY_STOP              : ${EARLY_STOP}"
 echo "EARLY_STOP_PATIENCE     : ${EARLY_STOP_PATIENCE}"
+echo "EARLY_STOP_MIN_EPOCHS   : ${EARLY_STOP_MIN_EPOCHS}"
+echo "MONITOR_METRIC          : ${MONITOR_METRIC}"
 echo "EDL_LOSS_TYPE           : ${EDL_LOSS_TYPE}"
 echo "EVIDENCE_TYPE           : ${EVIDENCE_TYPE}"
 echo "FREEZE_BACKBONE         : ${FREEZE_BACKBONE}"
@@ -129,8 +148,13 @@ echo "BALANCE_TRAINING       : ${BALANCE_TRAINING}"
 echo "ANNEALING_STEP          : ${ANNEALING_STEP}"
 echo "LAMBDA_KL               : ${LAMBDA_KL}"
 echo "BCE_POS_WEIGHT          : ${BCE_POS_WEIGHT:-auto per fold}"
+echo "VAL_SPLIT               : ${VAL_SPLIT}"
+echo "VAL_FRACTION            : ${VAL_FRACTION}"
+echo "VAL_MAX_FRACTION        : ${VAL_MAX_FRACTION}"
+echo "VAL_MIN_POS_PATIENTS    : ${VAL_MIN_POSITIVE_PATIENTS}"
+echo "VAL_RANDOM_STATE        : ${VAL_RANDOM_STATE}"
 echo "K_FOLD                  : ${NUM_FOLDS}"
-echo "FOLDS_TO_RUN            : ${FOLDS_TO_RUN}"
+echo "FOLDS_TO_RUN            : ${FOLDS_TO_RUN:-all folds}"
 echo "RUN_OUTPUT_DIR          : ${RUN_OUTPUT_DIR}"
 
 if [[ ! -f "${CSV_PATH}" ]]; then
@@ -167,6 +191,11 @@ python -u edl_train.py \
   --train_cohorts "${TRAIN_COHORTS}" \
   --test_cohorts "${TEST_COHORTS}" \
   --output_split_col "${OUTPUT_SPLIT_COL}" \
+  "${VAL_SPLIT_FLAG[@]}" \
+  --rsna_val_fraction "${VAL_FRACTION}" \
+  --rsna_val_max_fraction "${VAL_MAX_FRACTION}" \
+  --rsna_val_min_positive_patients "${VAL_MIN_POSITIVE_PATIENTS}" \
+  --rsna_val_random_state "${VAL_RANDOM_STATE}" \
   --img_encoder "${IMG_ENCODER}" \
   --emb_dim "${EMB_DIM}" \
   "${LINEAR_PROJ_FLAG[@]}" \
@@ -177,12 +206,13 @@ python -u edl_train.py \
   "${POS_WEIGHT_FLAG[@]}" \
   "${FREEZE_BACKBONE_FLAG[@]}" \
   --k_fold "${NUM_FOLDS}" \
-  --folds_to_run "${FOLDS_TO_RUN}" \
+  "${FOLDS_TO_RUN_FLAG[@]}" \
   --max_epochs "${MAX_EPOCHS}" \
   --warm_up "${WARM_UP}" \
   --batch_size "${BATCH_SIZE}" \
   --num_workers "${NUM_WORKERS}" \
   --learning_rate "${LEARNING_RATE}" \
+  --monitor_metric "${MONITOR_METRIC}" \
   --devices "${NUM_GPUS}" \
   --strategy auto \
   --precision "${PRECISION}" \

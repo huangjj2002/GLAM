@@ -210,6 +210,11 @@ def main():
     parser.add_argument("--train_cohorts", type=str, default="1-8")
     parser.add_argument("--test_cohorts", type=str, default="9-10")
     parser.add_argument("--output_split_col", type=str, default="split")
+    parser.add_argument("--val_split", action="store_true")
+    parser.add_argument("--val_fraction", type=float, default=0.15)
+    parser.add_argument("--val_max_fraction", type=float, default=0.25)
+    parser.add_argument("--val_min_positive_patients", type=int, default=3)
+    parser.add_argument("--val_random_state", type=int, default=42)
     parser.add_argument("--threshold", type=float, default=0.5)
     parser.add_argument("--ckpt_paths", nargs="+", required=True)
     parser.add_argument("--output_report", type=str, required=True)
@@ -240,6 +245,11 @@ def main():
         train_cohorts=args.train_cohorts,
         test_cohorts=args.test_cohorts,
         k_fold=args.k_fold,
+        val_split=args.val_split,
+        val_fraction=args.val_fraction,
+        val_max_fraction=args.val_max_fraction,
+        val_min_positive_patients=args.val_min_positive_patients,
+        val_random_state=args.val_random_state,
     )
     actual_cohort_col = split_metadata["actual_cohort_col"]
     base_split = split_metadata["base_split"]

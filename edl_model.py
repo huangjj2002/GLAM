@@ -34,6 +34,7 @@ from edl_loss import (
     edl_mse_loss,
     compute_uncertainty,
     compute_dirichlet_prob,
+    get_kl_annealing_coef,
 )
 
 from dataset.utils import get_specificity_with_sensitivity, pfbeta
@@ -421,19 +422,25 @@ class EDLModel(LightningModule):
     # ------------------------------------------------------------------
     def training_step(self, batch, batch_idx):
         loss, acc, pos_rate, pred_pos_rate = self._shared_step(batch, batch_idx, "train")
+        kl_coef = get_kl_annealing_coef(
+            self.current_epoch,
+            self.hparams.annealing_step,
+            self.hparams.lambda_kl,
+        )
         self.log_dict(
             {
                 "train_loss_step": loss,
                 "train_acc_step": acc,
                 "train_pos_rate_step": pos_rate,
                 "train_pred_pos_rate_step": pred_pos_rate,
+                "edl_kl_coef_step": kl_coef,
             },
             on_step=True, on_epoch=False,
             batch_size=self.hparams.batch_size,
             sync_dist=True, prog_bar=True, logger=False, rank_zero_only=True,
         )
         self.log_dict(
-            {"train_loss": loss, "train_acc": acc},
+            {"train_loss": loss, "train_acc": acc, "edl_kl_coef": kl_coef},
             on_step=False, on_epoch=True,
             batch_size=self.hparams.batch_size,
             sync_dist=True, prog_bar=False, rank_zero_only=True,
@@ -582,6 +589,7 @@ class EDLModel(LightningModule):
         print(f"### [EDL] Test Accuracy: {acc:.4f}")
         print(f"### [EDL] Test Balanced Accuracy: {ba:.4f}")
         print(f"### [EDL] Test AUC: {auc:.4f}")
+        self._print_output_diagnostics(pos_scores)
 
         self.log("test_AUROC", float(auc), on_epoch=True, prog_bar=True, sync_dist=True, logger=True)
 
@@ -602,6 +610,31 @@ class EDLModel(LightningModule):
             return float(x)
         except Exception:
             return None
+
+    def _print_output_diagnostics(self, pos_scores):
+        try:
+            prob_q = np.quantile(pos_scores, [0.0, 0.01, 0.05, 0.5, 0.95, 0.99, 1.0])
+            msg = "### [EDL] prob_1 quantiles [0,1,5,50,95,99,100]%: "
+            msg += ", ".join(f"{v:.6f}" for v in prob_q)
+            print(msg)
+            if self.all_uncertainty is not None:
+                unc = np.asarray(self.all_uncertainty, dtype=float)
+                unc_q = np.quantile(unc, [0.0, 0.01, 0.05, 0.5, 0.95, 0.99, 1.0])
+                msg = "### [EDL] uncertainty quantiles [0,1,5,50,95,99,100]%: "
+                msg += ", ".join(f"{v:.6f}" for v in unc_q)
+                print(msg)
+            if self.all_evidence is not None:
+                strength = np.asarray(self.all_evidence, dtype=float).sum(axis=1) + self.num_classes
+                strength_q = np.quantile(strength, [0.0, 0.01, 0.05, 0.5, 0.95, 0.99, 1.0])
+                msg = "### [EDL] sum(alpha) quantiles [0,1,5,50,95,99,100]%: "
+                msg += ", ".join(f"{v:.6f}" for v in strength_q)
+                print(msg)
+            if float(np.max(pos_scores) - np.min(pos_scores)) < 1e-3:
+                print("### [EDL][Warning] prob_1 range is very narrow; predictions may be collapsed.")
+            if self.all_uncertainty is not None and float(np.max(self.all_uncertainty) - np.min(self.all_uncertainty)) < 1e-3:
+                print("### [EDL][Warning] uncertainty range is very narrow; uncertainty may be collapsed.")
+        except Exception as exc:
+            print(f"### [EDL][Warning] Failed to print output diagnostics: {exc}")
 
     @staticmethod
     def _find_best_binary_threshold(labels, scores):

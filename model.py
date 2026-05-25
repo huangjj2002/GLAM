@@ -1632,6 +1632,11 @@ class GLAM(LightningModule):
         parser.add_argument("--rsna_cohort_col", type=str, default="cohert_num", help="Cohort column name used when --split_source cohort.")
         parser.add_argument("--train_cohorts", type=str, default="1-8", help="Cohort spec for training pool, e.g. '1-8' or '1,2,3'.")
         parser.add_argument("--test_cohorts", type=str, default="9-10", help="Cohort spec for test pool, e.g. '9-10' or '9,10'.")
+        parser.add_argument("--rsna_val_split", action="store_true", help="For k_fold=0, split a patient-level validation set from the train pool.")
+        parser.add_argument("--rsna_val_fraction", type=float, default=0.15, help="Initial patient-level validation fraction for k_fold=0.")
+        parser.add_argument("--rsna_val_max_fraction", type=float, default=0.25, help="Maximum validation fraction when auto-expanding to meet positive-patient constraints.")
+        parser.add_argument("--rsna_val_min_positive_patients", type=int, default=3, help="Minimum positive patients required in the k_fold=0 validation split.")
+        parser.add_argument("--rsna_val_random_state", type=int, default=42, help="Random seed for the k_fold=0 validation split.")
         parser.add_argument("--output_split_col", type=str, default="split", help="Output split column name for exported prediction CSVs.")
         parser.add_argument("--rsna_use_all_data", action="store_true", help="Disable split/cohort filtering and evaluate on all rows of the custom RSNA CSV.")
         parser.add_argument("--load_jpg", action="store_true")
@@ -1698,6 +1703,8 @@ class GLAM(LightningModule):
         parser.add_argument("--early_stop", action="store_true", help="Enable early stopping based on validation metric.")
         parser.add_argument("--early_stop_patience", type=int, default=10, help="Number of epochs with no improvement before stopping.")
         parser.add_argument("--early_stop_min_delta", type=float, default=0.0, help="Minimum change in the monitored metric to qualify as an improvement.")
+        parser.add_argument("--early_stop_min_epochs", type=int, default=0, help="Do not allow early stopping before this many epochs have completed.")
+        parser.add_argument("--monitor_metric", type=str, default=None, help="Validation metric to monitor for checkpointing and early stopping.")
 
         return parser
 

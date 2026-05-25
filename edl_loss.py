@@ -72,6 +72,23 @@ def kl_divergence_dirichlet(alpha: torch.Tensor, num_classes: int) -> torch.Tens
     return kl
 
 
+def get_kl_annealing_coef(epoch_num: int, annealing_step: int = 10, lambda_kl: float = 0.1) -> float:
+    annealing_coef = min(1.0, float(epoch_num) / max(float(annealing_step), 1.0))
+    return float(lambda_kl) * annealing_coef
+
+
+def assert_kl_sanity(atol: float = 1e-6) -> None:
+    alpha_uniform = torch.ones(2, 2)
+    kl_uniform = kl_divergence_dirichlet(alpha_uniform, num_classes=2)
+    if not torch.allclose(kl_uniform, torch.zeros_like(kl_uniform), atol=atol):
+        raise AssertionError(f"KL sanity check failed for Dir(1)||Dir(1): {kl_uniform}")
+
+    alpha_nonuniform = torch.tensor([[3.0, 1.0], [1.0, 4.0]])
+    kl_nonuniform = kl_divergence_dirichlet(alpha_nonuniform, num_classes=2)
+    if not torch.all(kl_nonuniform > 0):
+        raise AssertionError(f"KL sanity check failed for non-uniform alpha: {kl_nonuniform}")
+
+
 def _apply_binary_pos_weight(loss: torch.Tensor, target: torch.Tensor, pos_weight: float = None) -> torch.Tensor:
     """Apply BCE-style positive-class sample weighting for binary one-hot targets."""
     if pos_weight is None or target.shape[-1] < 2:
@@ -125,8 +142,7 @@ def edl_digamma_loss(
     kl = kl_divergence_dirichlet(alpha_tilde, alpha.shape[-1])
 
     # Annealing: gradually increase KL weight
-    annealing_coef = min(1.0, epoch_num / max(annealing_step, 1))
-    annealing_coef = lambda_kl * annealing_coef
+    annealing_coef = get_kl_annealing_coef(epoch_num, annealing_step, lambda_kl)
 
     loss = loss_ce + annealing_coef * kl
 
@@ -171,8 +187,7 @@ def edl_log_loss(
 
     kl = kl_divergence_dirichlet(alpha_tilde, alpha.shape[-1])
 
-    annealing_coef = min(1.0, epoch_num / max(annealing_step, 1))
-    annealing_coef = lambda_kl * annealing_coef
+    annealing_coef = get_kl_annealing_coef(epoch_num, annealing_step, lambda_kl)
 
     loss = loss_nll + annealing_coef * kl
 
@@ -218,8 +233,7 @@ def edl_mse_loss(
 
     kl = kl_divergence_dirichlet(alpha_tilde, alpha.shape[-1])
 
-    annealing_coef = min(1.0, epoch_num / max(annealing_step, 1))
-    annealing_coef = lambda_kl * annealing_coef
+    annealing_coef = get_kl_annealing_coef(epoch_num, annealing_step, lambda_kl)
 
     loss = loss_mse + annealing_coef * kl
 
