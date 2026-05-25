@@ -13,6 +13,8 @@ BATCH_SIZE=32
 NUM_WORKERS=4
 PRECISION="32"
 LEARNING_RATE=1e-4
+SHOW_PROGRESS_BAR=1
+#是否显示Lightning训练进度条（1=显示，0=隐藏）
 
 # 早停策略配置
 EARLY_STOP=1
@@ -92,6 +94,11 @@ if [[ "${USE_LINEAR_PROJ}" == "1" ]]; then
   LINEAR_PROJ_FLAG+=(--linear_proj)
 fi
 
+PROGRESS_BAR_FLAG=()
+if [[ "${SHOW_PROGRESS_BAR}" != "1" ]]; then
+  PROGRESS_BAR_FLAG+=(--no_progress_bar)
+fi
+
 EARLY_STOP_FLAG=()
 if [[ "${EARLY_STOP}" == "1" ]]; then
   EARLY_STOP_FLAG+=(--early_stop --early_stop_patience "${EARLY_STOP_PATIENCE}" --early_stop_min_epochs "${EARLY_STOP_MIN_EPOCHS}")
@@ -126,6 +133,7 @@ echo "EMB_DIM                 : ${EMB_DIM}"
 echo "USE_LINEAR_PROJ         : ${USE_LINEAR_PROJ}"
 echo "MAX_EPOCHS              : ${MAX_EPOCHS}"
 echo "WARM_UP (epochs)        : ${WARM_UP}"
+echo "SHOW_PROGRESS_BAR       : ${SHOW_PROGRESS_BAR}"
 echo "EARLY_STOP              : ${EARLY_STOP}"
 echo "EARLY_STOP_PATIENCE     : ${EARLY_STOP_PATIENCE}"
 echo "EARLY_STOP_MIN_EPOCHS   : ${EARLY_STOP_MIN_EPOCHS}"
@@ -177,7 +185,7 @@ for ((FOLD=TRAIN_FOLD_START; FOLD<TRAIN_FOLD_END; FOLD++)); do
 
   python -u train.py \
     --experiment_name "${EXP_NAME}" \
-    --no_progress_bar \
+    "${PROGRESS_BAR_FLAG[@]}" \
     --train_by_epoch \
     --rsna_mammo \
     --img_cls_ft \
@@ -197,6 +205,7 @@ for ((FOLD=TRAIN_FOLD_START; FOLD<TRAIN_FOLD_END; FOLD++)); do
     --max_epochs "${MAX_EPOCHS}" \
     --warm_up "${WARM_UP}" \
     --monitor_metric "${MONITOR_METRIC}" \
+    --output_dir "${RUN_OUTPUT_DIR}" \
     --img_size "${IMG_SIZE}" \
     --crop_size "${CROP_SIZE}" \
     --num_classes 1 \
@@ -262,7 +271,7 @@ for ((FOLD=TRAIN_FOLD_START; FOLD<TRAIN_FOLD_END; FOLD++)); do
 
   python -u train.py \
     --eval \
-    --no_progress_bar \
+    "${PROGRESS_BAR_FLAG[@]}" \
     --save_prediction \
     --rsna_mammo \
     --img_cls_ft \
@@ -278,6 +287,7 @@ for ((FOLD=TRAIN_FOLD_START; FOLD<TRAIN_FOLD_END; FOLD++)); do
     --fold 0 \
     --rsna_use_all_data \
     --pretrained_model "${CKPT_PATH}" \
+    --output_dir "${RUN_OUTPUT_DIR}" \
     --num_classes 1 \
     --weighted_binary \
     "${POS_WEIGHT_FLAG[@]}" \

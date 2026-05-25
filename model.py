@@ -114,6 +114,9 @@ class GLAM(LightningModule):
         self.all_scores = None
         self.all_labels = None
         self.all_vis_feats = None
+        self.loss_history = {"epoch": [], "train_loss": [], "val_loss": []}
+        output_dir = getattr(self.hparams, "output_dir", None) or os.getcwd()
+        self.loss_plot_dir = os.path.join(output_dir, "plots")
 
         # init encoders
         downsample_factor = 14
@@ -1034,6 +1037,73 @@ class GLAM(LightningModule):
         except Exception:
             return None
 
+    def _update_loss_history_and_plot(self):
+        if self.trainer is None or getattr(self.trainer, "sanity_checking", False):
+            return
+
+        metrics = self.trainer.callback_metrics
+        train_loss = self._to_float(metrics.get("train_loss"))
+        val_loss = self._to_float(metrics.get("val_loss"))
+        if train_loss is None and val_loss is None:
+            return
+
+        epoch = int(self.current_epoch)
+        if self.loss_history["epoch"] and self.loss_history["epoch"][-1] == epoch:
+            self.loss_history["train_loss"][-1] = train_loss
+            self.loss_history["val_loss"][-1] = val_loss
+        else:
+            self.loss_history["epoch"].append(epoch)
+            self.loss_history["train_loss"].append(train_loss)
+            self.loss_history["val_loss"].append(val_loss)
+
+        os.makedirs(self.loss_plot_dir, exist_ok=True)
+        fold = getattr(self.hparams, "fold", "NA")
+        csv_path = os.path.join(self.loss_plot_dir, f"fold{fold}_loss_curve.csv")
+        with open(csv_path, "w", encoding="utf-8") as f:
+            f.write("epoch,train_loss,val_loss\n")
+            for ep, tr_loss, va_loss in zip(
+                self.loss_history["epoch"],
+                self.loss_history["train_loss"],
+                self.loss_history["val_loss"],
+            ):
+                tr_text = "" if tr_loss is None else f"{tr_loss:.8f}"
+                va_text = "" if va_loss is None else f"{va_loss:.8f}"
+                f.write(f"{ep},{tr_text},{va_text}\n")
+
+        try:
+            import matplotlib
+
+            matplotlib.use("Agg")
+            import matplotlib.pyplot as plt
+
+            fig, ax = plt.subplots(figsize=(7, 4.5))
+            if any(v is not None for v in self.loss_history["train_loss"]):
+                ax.plot(
+                    self.loss_history["epoch"],
+                    self.loss_history["train_loss"],
+                    marker="o",
+                    label="train_loss",
+                )
+            if any(v is not None for v in self.loss_history["val_loss"]):
+                ax.plot(
+                    self.loss_history["epoch"],
+                    self.loss_history["val_loss"],
+                    marker="o",
+                    label="val_loss",
+                )
+            ax.set_xlabel("epoch")
+            ax.set_ylabel("loss")
+            ax.set_title(f"Loss Curve - Fold {fold}")
+            ax.grid(True, alpha=0.3)
+            ax.legend()
+            fig.tight_layout()
+            plot_path = os.path.join(self.loss_plot_dir, f"fold{fold}_loss_curve.png")
+            fig.savefig(plot_path, dpi=200)
+            plt.close(fig)
+            print(f"### Loss curve saved: {plot_path}")
+        except Exception as exc:
+            print(f"### [Warning] Failed to save loss curve plot: {exc}")
+
     def test_step(self, batch, batch_idx):
 
         ex_loss_dict = None
@@ -1236,6 +1306,7 @@ class GLAM(LightningModule):
                     f"### Fold {fold} | Epoch {self.current_epoch} | "
                     f"val_F1: {val_f1:.4f}"
                 )
+                self._update_loss_history_and_plot()
         self.all_scores_val = None
         self.all_labels_val = None
 
@@ -1638,6 +1709,7 @@ class GLAM(LightningModule):
         parser.add_argument("--rsna_val_min_positive_patients", type=int, default=3, help="Minimum positive patients required in the k_fold=0 validation split.")
         parser.add_argument("--rsna_val_random_state", type=int, default=42, help="Random seed for the k_fold=0 validation split.")
         parser.add_argument("--output_split_col", type=str, default="split", help="Output split column name for exported prediction CSVs.")
+        parser.add_argument("--output_dir", type=str, default=None, help="Output directory for auxiliary training artifacts such as loss curves.")
         parser.add_argument("--rsna_use_all_data", action="store_true", help="Disable split/cohort filtering and evaluate on all rows of the custom RSNA CSV.")
         parser.add_argument("--load_jpg", action="store_true")
         parser.add_argument("--img_size", type=int, default=224)
