@@ -12,6 +12,7 @@ from dateutil import tz
 
 from pytorch_lightning import Trainer, seed_everything
 from pytorch_lightning.callbacks import (
+    Callback,
     EarlyStopping,
     LearningRateMonitor,
     ModelCheckpoint,
@@ -67,6 +68,76 @@ class MinEpochModelCheckpoint(ModelCheckpoint):
         return self.min_epochs > 0 and (trainer.current_epoch + 1) < self.min_epochs
 
 
+class TextProgressPrinter(Callback):
+    def __init__(self, interval=50):
+        super().__init__()
+        self.interval = max(1, int(interval or 50))
+
+    @staticmethod
+    def _fmt_value(value):
+        if value is None:
+            return None
+        if isinstance(value, torch.Tensor):
+            value = value.detach()
+            if value.numel() != 1:
+                return None
+            value = value.float().cpu().item()
+        try:
+            return f"{float(value):.4f}"
+        except (TypeError, ValueError):
+            return None
+
+    def _max_epochs(self, trainer):
+        max_epochs = getattr(trainer, "max_epochs", None)
+        return max_epochs if max_epochs and max_epochs > 0 else "?"
+
+    def on_train_epoch_start(self, trainer, pl_module):
+        total = getattr(trainer, "num_training_batches", None) or "?"
+        print(
+            f"### Progress | Epoch {trainer.current_epoch + 1}/{self._max_epochs(trainer)} "
+            f"| train batches: {total}",
+            flush=True,
+        )
+
+    def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
+        total = getattr(trainer, "num_training_batches", None)
+        current = batch_idx + 1
+        should_print = current == 1
+        if isinstance(total, int) and total > 0:
+            should_print = should_print or current == total
+        should_print = should_print or current % self.interval == 0
+        if not should_print:
+            return
+
+        metrics = getattr(trainer, "callback_metrics", {})
+        loss = self._fmt_value(metrics.get("train_loss") or metrics.get("loss"))
+        loss_text = f" | train_loss={loss}" if loss is not None else ""
+        total_text = total if isinstance(total, int) and total > 0 else "?"
+        print(
+            f"### Progress | Epoch {trainer.current_epoch + 1}/{self._max_epochs(trainer)} "
+            f"| batch {current}/{total_text}{loss_text}",
+            flush=True,
+        )
+
+    def on_validation_epoch_end(self, trainer, pl_module):
+        if getattr(trainer, "sanity_checking", False):
+            return
+        metrics = getattr(trainer, "callback_metrics", {})
+        val_loss = self._fmt_value(metrics.get("val_loss"))
+        val_auroc = self._fmt_value(metrics.get("val_AUROC"))
+        parts = []
+        if val_loss is not None:
+            parts.append(f"val_loss={val_loss}")
+        if val_auroc is not None:
+            parts.append(f"val_AUROC={val_auroc}")
+        suffix = " | " + " | ".join(parts) if parts else ""
+        print(
+            f"### Progress | Epoch {trainer.current_epoch + 1}/{self._max_epochs(trainer)} "
+            f"| validation done{suffix}",
+            flush=True,
+        )
+
+
 @torch.no_grad()
 def concat_all_gather(tensor):
     """
@@ -100,6 +171,8 @@ def train(args, model, datamodule):
     callbacks = [
         LearningRateMonitor(logging_interval="step"),
     ]
+    if not args.no_progress_bar:
+        callbacks.append(TextProgressPrinter(args.progress_print_interval))
     if args.save_last_k > 1:
         callbacks.append(
             MinEpochModelCheckpoint(
@@ -209,7 +282,10 @@ def train(args, model, datamodule):
     )
 
     best_ckpt_path = os.path.join(ckpt_dir, "best_ckpts.yaml")
-    callbacks[1].to_yaml(filepath=best_ckpt_path)
+    checkpoint_callback = next(
+        callback for callback in callbacks if isinstance(callback, ModelCheckpoint)
+    )
+    checkpoint_callback.to_yaml(filepath=best_ckpt_path)
     return model
 
 
@@ -244,6 +320,12 @@ def cli_main():
     parser.add_argument("--pretrained_model", type=str, default=None)
     parser.add_argument("--resume_ckpt", type=str, default=None)
     parser.add_argument("--no_progress_bar", action="store_true")
+    parser.add_argument(
+        "--progress_print_interval",
+        type=int,
+        default=50,
+        help="Print plain-text training progress every N batches when progress bar is enabled.",
+    )
     parser.add_argument(
         "--train_by_epoch",
         action="store_true",

@@ -15,6 +15,10 @@ PRECISION="32"
 LEARNING_RATE=1e-4
 SHOW_PROGRESS_BAR=1
 #是否显示Lightning训练进度条（1=显示，0=隐藏）
+PROGRESS_PRINT_INTERVAL=50
+#在日志中每隔多少个batch强制打印一次文本进度
+TRAIN_LOG_TO_FILE=0
+#是否用tee保存完整训练日志（1=保存；会让Lightning原生动态进度条不可见）
 
 # 早停策略配置
 EARLY_STOP=1
@@ -134,6 +138,8 @@ echo "USE_LINEAR_PROJ         : ${USE_LINEAR_PROJ}"
 echo "MAX_EPOCHS              : ${MAX_EPOCHS}"
 echo "WARM_UP (epochs)        : ${WARM_UP}"
 echo "SHOW_PROGRESS_BAR       : ${SHOW_PROGRESS_BAR}"
+echo "PROGRESS_PRINT_INTERVAL : ${PROGRESS_PRINT_INTERVAL}"
+echo "TRAIN_LOG_TO_FILE       : ${TRAIN_LOG_TO_FILE}"
 echo "EARLY_STOP              : ${EARLY_STOP}"
 echo "EARLY_STOP_PATIENCE     : ${EARLY_STOP_PATIENCE}"
 echo "EARLY_STOP_MIN_EPOCHS   : ${EARLY_STOP_MIN_EPOCHS}"
@@ -183,9 +189,11 @@ for ((FOLD=TRAIN_FOLD_START; FOLD<TRAIN_FOLD_END; FOLD++)); do
   TRAIN_LOG="${RESULTS_DIR}/fold${FOLD}_train.log"
   echo "---- Training fold ${FOLD} (${EXP_NAME}) ----"
 
+  run_train_command() {
   python -u train.py \
     --experiment_name "${EXP_NAME}" \
     "${PROGRESS_BAR_FLAG[@]}" \
+    --progress_print_interval "${PROGRESS_PRINT_INTERVAL}" \
     --train_by_epoch \
     --rsna_mammo \
     --img_cls_ft \
@@ -231,7 +239,14 @@ for ((FOLD=TRAIN_FOLD_START; FOLD<TRAIN_FOLD_END; FOLD++)); do
     --rsna_split_col "${SPLIT_COL}" \
     --rsna_train_split_value "${TRAIN_SPLIT_VALUE}" \
     --rsna_test_split_value "${TEST_SPLIT_VALUE}" \
-    "${EARLY_STOP_FLAG[@]}" 2>&1 | tee "${TRAIN_LOG}"
+    "${EARLY_STOP_FLAG[@]}"
+  }
+
+  if [[ "${TRAIN_LOG_TO_FILE}" == "1" ]]; then
+    run_train_command 2>&1 | tee "${TRAIN_LOG}"
+  else
+    run_train_command
+  fi
 done
 
 echo "=============================="

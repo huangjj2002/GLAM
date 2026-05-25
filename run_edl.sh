@@ -15,6 +15,10 @@ NUM_WORKERS=4
 # Windows下建议 num_workers=0
 PRECISION="32"
 LEARNING_RATE=1e-4
+SHOW_PROGRESS_BAR=1
+# Whether to show Lightning/tqdm progress and plain-text progress lines.
+PROGRESS_PRINT_INTERVAL=50
+# Print plain-text training progress every N batches.
 
 # 早停策略
 EARLY_STOP=1
@@ -120,6 +124,11 @@ if [[ "${VAL_SPLIT}" == "1" ]]; then
   VAL_SPLIT_FLAG+=(--rsna_val_split)
 fi
 
+PROGRESS_BAR_FLAG=()
+if [[ "${SHOW_PROGRESS_BAR}" != "1" ]]; then
+  PROGRESS_BAR_FLAG+=(--no_progress_bar)
+fi
+
 FOLDS_TO_RUN_FLAG=()
 if [[ -n "${FOLDS_TO_RUN}" ]]; then
   FOLDS_TO_RUN_FLAG+=(--folds_to_run "${FOLDS_TO_RUN}")
@@ -137,6 +146,8 @@ echo "EMB_DIM                 : ${EMB_DIM}"
 echo "USE_LINEAR_PROJ         : ${USE_LINEAR_PROJ}"
 echo "MAX_EPOCHS              : ${MAX_EPOCHS}"
 echo "WARM_UP (epochs)        : ${WARM_UP}"
+echo "SHOW_PROGRESS_BAR       : ${SHOW_PROGRESS_BAR}"
+echo "PROGRESS_PRINT_INTERVAL : ${PROGRESS_PRINT_INTERVAL}"
 echo "EARLY_STOP              : ${EARLY_STOP}"
 echo "EARLY_STOP_PATIENCE     : ${EARLY_STOP_PATIENCE}"
 echo "EARLY_STOP_MIN_EPOCHS   : ${EARLY_STOP_MIN_EPOCHS}"
@@ -180,6 +191,8 @@ python -u edl_train.py \
   --img_root "${IMG_ROOT}" \
   --path_pattern "${PATH_PATTERN}" \
   --pretrained_model "${PRETRAINED_MODEL}" \
+  "${PROGRESS_BAR_FLAG[@]}" \
+  --progress_print_interval "${PROGRESS_PRINT_INTERVAL}" \
   --patient_col "${PATIENT_COL}" \
   --image_col "${IMAGE_COL}" \
   --label_col "${LABEL_COL}" \

@@ -34,6 +34,7 @@ import pandas as pd
 import torch
 from pytorch_lightning import seed_everything, Trainer
 from pytorch_lightning.callbacks import (
+    Callback,
     EarlyStopping,
     LearningRateMonitor,
     ModelCheckpoint,
@@ -83,6 +84,76 @@ class MinEpochModelCheckpoint(ModelCheckpoint):
         return self.min_epochs > 0 and (trainer.current_epoch + 1) < self.min_epochs
 
 
+class TextProgressPrinter(Callback):
+    def __init__(self, interval=50):
+        super().__init__()
+        self.interval = max(1, int(interval or 50))
+
+    @staticmethod
+    def _fmt_value(value):
+        if value is None:
+            return None
+        if isinstance(value, torch.Tensor):
+            value = value.detach()
+            if value.numel() != 1:
+                return None
+            value = value.float().cpu().item()
+        try:
+            return f"{float(value):.4f}"
+        except (TypeError, ValueError):
+            return None
+
+    def _max_epochs(self, trainer):
+        max_epochs = getattr(trainer, "max_epochs", None)
+        return max_epochs if max_epochs and max_epochs > 0 else "?"
+
+    def on_train_epoch_start(self, trainer, pl_module):
+        total = getattr(trainer, "num_training_batches", None) or "?"
+        print(
+            f"### Progress | Epoch {trainer.current_epoch + 1}/{self._max_epochs(trainer)} "
+            f"| train batches: {total}",
+            flush=True,
+        )
+
+    def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
+        total = getattr(trainer, "num_training_batches", None)
+        current = batch_idx + 1
+        should_print = current == 1
+        if isinstance(total, int) and total > 0:
+            should_print = should_print or current == total
+        should_print = should_print or current % self.interval == 0
+        if not should_print:
+            return
+
+        metrics = getattr(trainer, "callback_metrics", {})
+        loss = self._fmt_value(metrics.get("train_loss") or metrics.get("loss"))
+        loss_text = f" | train_loss={loss}" if loss is not None else ""
+        total_text = total if isinstance(total, int) and total > 0 else "?"
+        print(
+            f"### Progress | Epoch {trainer.current_epoch + 1}/{self._max_epochs(trainer)} "
+            f"| batch {current}/{total_text}{loss_text}",
+            flush=True,
+        )
+
+    def on_validation_epoch_end(self, trainer, pl_module):
+        if getattr(trainer, "sanity_checking", False):
+            return
+        metrics = getattr(trainer, "callback_metrics", {})
+        val_loss = self._fmt_value(metrics.get("val_loss"))
+        val_auroc = self._fmt_value(metrics.get("val_AUROC"))
+        parts = []
+        if val_loss is not None:
+            parts.append(f"val_loss={val_loss}")
+        if val_auroc is not None:
+            parts.append(f"val_AUROC={val_auroc}")
+        suffix = " | " + " | ".join(parts) if parts else ""
+        print(
+            f"### Progress | Epoch {trainer.current_epoch + 1}/{self._max_epochs(trainer)} "
+            f"| validation done{suffix}",
+            flush=True,
+        )
+
+
 # ===========================================================================
 # Utility helpers
 # ===========================================================================
@@ -125,6 +196,8 @@ def train_one_fold(args_dict, fold, ckpt_dir):
             min_epochs=args_dict.get("early_stop_min_epochs", 0),
         ),
     ]
+    if not args_dict.get("no_progress_bar", False):
+        callbacks.append(TextProgressPrinter(args_dict.get("progress_print_interval", 50)))
     if args_dict.get("early_stop", False):
         callbacks.append(MinEpochEarlyStopping(
             monitor=monitor,
@@ -155,7 +228,7 @@ def train_one_fold(args_dict, fold, ckpt_dir):
         deterministic=False,
         accumulate_grad_batches=args_dict.get("accumulate_grad_batches", 1),
         check_val_every_n_epoch=1,
-        enable_progress_bar=True,
+        enable_progress_bar=not args_dict.get("no_progress_bar", False),
     )
 
     trainer.fit(model, datamodule=datamodule)
@@ -197,7 +270,7 @@ def test_full_data(args_dict, fold, ckpt_path):
         precision=test_args.get("precision", "32"),
         devices=1, max_epochs=1,
         deterministic=False, inference_mode=True,
-        enable_progress_bar=True,
+        enable_progress_bar=not test_args.get("no_progress_bar", False),
     )
 
     model.all_scores = None
@@ -680,6 +753,13 @@ def parse_args():
     parser.add_argument("--early_stop_min_delta", type=float, default=0.0)
     parser.add_argument("--early_stop_min_epochs", type=int, default=0)
     parser.add_argument("--monitor_metric", type=str, default="val_AUROC")
+    parser.add_argument("--no_progress_bar", action="store_true")
+    parser.add_argument(
+        "--progress_print_interval",
+        type=int,
+        default=50,
+        help="Print plain-text training progress every N batches when progress bar is enabled.",
+    )
 
     # Image size
     parser.add_argument("--img_size", type=int, default=336)
