@@ -1,7 +1,7 @@
 ﻿#!/bin/bash
 set -euo pipefail
 
-GPU_ID=2
+GPU_ID=1
 #指定GPU
 MAX_EPOCHS=25
 #指定每一折训练的epoch
