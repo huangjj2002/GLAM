@@ -12,64 +12,67 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # Editable configuration
 # ---------------------------------------------------------------------------
-GPU_ID="${GPU_ID:-2}"
-MAX_EPOCHS="${MAX_EPOCHS:-25}"
-WARM_UP="${WARM_UP:-1}"
-NUM_GPUS="${NUM_GPUS:-1}"
-BATCH_SIZE="${BATCH_SIZE:-16}"
-NUM_WORKERS="${NUM_WORKERS:-4}"
-PRECISION="${PRECISION:-32}"
-LEARNING_RATE="${LEARNING_RATE:-1e-4}"
-SHOW_PROGRESS_BAR="${SHOW_PROGRESS_BAR:-1}"
-PROGRESS_PRINT_INTERVAL="${PROGRESS_PRINT_INTERVAL:-50}"
+GPU_ID=2
+GPU_IDS=("1" "2" "3")
+RUN_IN_PARALLEL=1
+MAX_EPOCHS=25
+WARM_UP=1
+NUM_GPUS=1
+BATCH_SIZE=48
+NUM_WORKERS=4
+PRECISION="32"
+LEARNING_RATE=1e-4
+SHOW_PROGRESS_BAR=1
+PROGRESS_PRINT_INTERVAL=50
 
-EARLY_STOP="${EARLY_STOP:-1}"
-EARLY_STOP_PATIENCE="${EARLY_STOP_PATIENCE:-3}"
-EARLY_STOP_MIN_EPOCHS="${EARLY_STOP_MIN_EPOCHS:-12}"
-MONITOR_METRIC="${MONITOR_METRIC:-val_AUROC}"
+EARLY_STOP=1
+EARLY_STOP_PATIENCE=3
+EARLY_STOP_MIN_EPOCHS=12
+MONITOR_METRIC="val_AUROC"
 
-OUTPUT_DIR="${OUTPUT_DIR:-outputs}"
-ROUND1_BASE_EXP_NAME="${ROUND1_BASE_EXP_NAME:-edl_round1_posweight}"
-POS_WEIGHT_MODES=(${POS_WEIGHT_MODES:-none sqrt auto})
+OUTPUT_DIR="outputs"
+ROUND1_BASE_EXP_NAME="edl_round1_posweight"
+POS_WEIGHT_MODES=("none" "sqrt" "auto")
 
-IMG_ENCODER="${IMG_ENCODER:-dinov2_vitb14_reg}"
-EMB_DIM="${EMB_DIM:-512}"
-USE_LINEAR_PROJ="${USE_LINEAR_PROJ:-1}"
-IMG_SIZE="${IMG_SIZE:-336}"
-CROP_SIZE="${CROP_SIZE:-336}"
+IMG_ENCODER="dinov2_vitb14_reg"
+EMB_DIM=512
+USE_LINEAR_PROJ=1
+IMG_SIZE=336
+CROP_SIZE=336
 
-EVIDENCE_TYPE="${EVIDENCE_TYPE:-softplus}"
-EDL_LOSS_TYPE="${EDL_LOSS_TYPE:-digamma}"
-ANNEALING_STEP="${ANNEALING_STEP:-10}"
-LAMBDA_KL="${LAMBDA_KL:-0.1}"
-FREEZE_BACKBONE="${FREEZE_BACKBONE:-0}"
+EVIDENCE_TYPE="softplus"
+EDL_LOSS_TYPE="digamma"
+ANNEALING_STEP=10
+LAMBDA_KL=0.1
+FREEZE_BACKBONE=0
 # Keep this disabled for this sweep so only pos_weight changes.
-BALANCE_TRAINING="${BALANCE_TRAINING:-0}"
+BALANCE_TRAINING=0
 
 CSV_PATH="${CSV_PATH:-/home/dhao4/workspace/hjj_workspace/data/data.csv}"
 IMG_ROOT="${IMG_ROOT:-/home/dhao4/workspace/hjj_workspace/data/images_png}"
-PATH_PATTERN="${PATH_PATTERN:-{pid}/{iid}}"
+DEFAULT_PATH_PATTERN='{pid}/{iid}'
+PATH_PATTERN="${PATH_PATTERN:-${DEFAULT_PATH_PATTERN}}"
 
-PATIENT_COL="${PATIENT_COL:-patient_id}"
-IMAGE_COL="${IMAGE_COL:-image_id}"
-LABEL_COL="${LABEL_COL:-cancer}"
-SPLIT_COL="${SPLIT_COL:-split}"
-COHORT_COL="${COHORT_COL:-cohert_num}"
-SPLIT_SOURCE="${SPLIT_SOURCE:-cohort}"
-TRAIN_SPLIT_VALUE="${TRAIN_SPLIT_VALUE:-training}"
-TEST_SPLIT_VALUE="${TEST_SPLIT_VALUE:-test}"
-TRAIN_COHORTS="${TRAIN_COHORTS:-1-8}"
-TEST_COHORTS="${TEST_COHORTS:-9-10}"
-OUTPUT_SPLIT_COL="${OUTPUT_SPLIT_COL:-split}"
-VAL_SPLIT="${VAL_SPLIT:-1}"
-VAL_FRACTION="${VAL_FRACTION:-0.15}"
-VAL_MAX_FRACTION="${VAL_MAX_FRACTION:-0.25}"
-VAL_MIN_POSITIVE_PATIENTS="${VAL_MIN_POSITIVE_PATIENTS:-3}"
-VAL_RANDOM_STATE="${VAL_RANDOM_STATE:-42}"
+PATIENT_COL="patient_id"
+IMAGE_COL="image_id"
+LABEL_COL="cancer"
+SPLIT_COL="split"
+COHORT_COL="cohert_num"
+SPLIT_SOURCE="cohort"
+TRAIN_SPLIT_VALUE="training"
+TEST_SPLIT_VALUE="test"
+TRAIN_COHORTS="1-8"
+TEST_COHORTS="9-10"
+OUTPUT_SPLIT_COL="split"
+VAL_SPLIT=1
+VAL_FRACTION=0.15
+VAL_MAX_FRACTION=0.25
+VAL_MIN_POSITIVE_PATIENTS=3
+VAL_RANDOM_STATE=42
 
-PRETRAINED_MODEL="${PRETRAINED_MODEL:-$(cd "$(dirname "$0")" && pwd)/pretrain_model/last.ckpt}"
-NUM_FOLDS="${NUM_FOLDS:-0}"
-FOLDS_TO_RUN="${FOLDS_TO_RUN:-}"
+PRETRAINED_MODEL="$(cd "$(dirname "$0")" && pwd)/pretrain_model/last.ckpt"
+NUM_FOLDS=0
+FOLDS_TO_RUN=""
 
 # Use the Python from the active environment by default. Override when needed:
 #   PYTHON_BIN="/mnt/e/conda_env/torch/python.exe" bash run_edl_round1_posweight_sweep.sh
@@ -81,15 +84,11 @@ DRY_RUN="${DRY_RUN:-0}"
 # Set SKIP_PATH_CHECKS=1 only for command-inspection dry runs on a different host.
 SKIP_PATH_CHECKS="${SKIP_PATH_CHECKS:-0}"
 
-# Optional command-inspection fallback when CSV_PATH is unavailable.
-# Leave empty for real runs so sqrt is computed from the effective train split.
-SQRT_POS_WEIGHT_OVERRIDE="${SQRT_POS_WEIGHT_OVERRIDE:-}"
-
 # ---------------------------------------------------------------------------
 # Derived flags and setup
 # ---------------------------------------------------------------------------
 export WANDB_MODE="offline"
-export CUDA_VISIBLE_DEVICES="${GPU_ID}"
+# CUDA_VISIBLE_DEVICES is set per experiment so each mode can use a different GPU.
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "${ROOT_DIR}"
@@ -160,6 +159,19 @@ check_paths() {
     echo "[ERROR] PRETRAINED_MODEL checkpoint not found: ${PRETRAINED_MODEL}"
     exit 1
   fi
+}
+
+check_path_pattern() {
+  PATH_PATTERN="${PATH_PATTERN}" "${PYTHON_BIN}" - <<'PY'
+import os
+
+pattern = os.environ["PATH_PATTERN"]
+try:
+    rendered = pattern.format(pid="sample_pid", iid="sample_iid")
+except Exception as exc:
+    raise SystemExit(f"[ERROR] Invalid PATH_PATTERN={pattern!r}: {exc}")
+print(f"[OK] PATH_PATTERN={pattern!r} -> {rendered!r}")
+PY
 }
 
 compute_sqrt_pos_weight() {
@@ -246,8 +258,9 @@ print_config() {
   echo "============================================================"
   echo "Root dir                : ${ROOT_DIR}"
   echo "Python                  : ${PYTHON_BIN}"
-  echo "GPU_ID                  : ${GPU_ID}"
-  echo "CUDA_VISIBLE_DEVICES    : ${CUDA_VISIBLE_DEVICES}"
+  echo "GPU_ID (sequential)     : ${GPU_ID}"
+  echo "GPU_IDS (parallel)      : ${GPU_IDS[*]}"
+  echo "RUN_IN_PARALLEL         : ${RUN_IN_PARALLEL}"
   echo "CSV_PATH                : ${CSV_PATH}"
   echo "IMG_ROOT                : ${IMG_ROOT}"
   echo "PATH_PATTERN            : ${PATH_PATTERN}"
@@ -269,7 +282,6 @@ print_config() {
   echo "FOLDS_TO_RUN            : ${FOLDS_TO_RUN:-all folds}"
   echo "POS_WEIGHT_MODES        : ${POS_WEIGHT_MODES[*]}"
   echo "DRY_RUN                 : ${DRY_RUN}"
-  echo "SQRT_POS_WEIGHT_OVERRIDE: ${SQRT_POS_WEIGHT_OVERRIDE:-<empty>}"
   echo "SWEEP_OUTPUT_DIR        : ${SWEEP_OUTPUT_DIR}"
   echo "============================================================"
 }
@@ -278,7 +290,8 @@ build_and_run_command() {
   local mode="$1"
   local mode_output_dir="$2"
   local exp_name="$3"
-  shift 3
+  local mode_gpu_id="$4"
+  shift 4
   local pos_weight_flag=("$@")
 
   local cmd=(
@@ -334,10 +347,11 @@ build_and_run_command() {
 
   if [[ "${DRY_RUN}" == "1" ]]; then
     echo "[DRY_RUN] ${mode} command:"
+    printf ' CUDA_VISIBLE_DEVICES=%q' "${mode_gpu_id}"
     printf ' %q' "${cmd[@]}"
     echo
   else
-    "${cmd[@]}"
+    CUDA_VISIBLE_DEVICES="${mode_gpu_id}" "${cmd[@]}"
   fi
 }
 
@@ -345,16 +359,9 @@ check_required_outputs() {
   local mode_output_dir="$1"
   local required=(
     "${mode_output_dir}/per_model_predictions/edl_eval_report.txt"
+    "${mode_output_dir}/per_model_predictions/fold0_edl_predictions.csv"
     "${mode_output_dir}/per_model_predictions/ensemble_edl_predictions.csv"
   )
-  local fold_items=()
-  IFS=',' read -ra fold_items <<< "${FOLDS_TO_RUN}"
-  for fold in "${fold_items[@]}"; do
-    fold="${fold//[[:space:]]/}"
-    if [[ -n "${fold}" ]]; then
-      required+=("${mode_output_dir}/per_model_predictions/fold${fold}_edl_predictions.csv")
-    fi
-  done
   for path in "${required[@]}"; do
     if [[ ! -f "${path}" ]]; then
       echo "[ERROR] Expected output missing: ${path}"
@@ -364,6 +371,7 @@ check_required_outputs() {
 }
 
 check_paths
+check_path_pattern
 print_config
 
 SQRT_POS_WEIGHT=""
@@ -371,7 +379,9 @@ SQRT_NEG=""
 SQRT_POS=""
 SQRT_RATIO=""
 
-for mode in "${POS_WEIGHT_MODES[@]}"; do
+run_mode() {
+  local mode="$1"
+  local mode_gpu_id="$2"
   mode_output_dir="${SWEEP_OUTPUT_DIR}/${mode}"
   mkdir -p "${mode_output_dir}"
   exp_name="${ROUND1_BASE_EXP_NAME}_${mode}"
@@ -385,12 +395,7 @@ for mode in "${POS_WEIGHT_MODES[@]}"; do
       pos_weight_flag=(--pos_weight "1.0")
       ;;
     sqrt)
-      if [[ -n "${SQRT_POS_WEIGHT_OVERRIDE}" ]]; then
-        SQRT_NEG="override"
-        SQRT_POS="override"
-        SQRT_RATIO="override"
-        SQRT_POS_WEIGHT="${SQRT_POS_WEIGHT_OVERRIDE}"
-      elif [[ -z "${SQRT_POS_WEIGHT}" ]]; then
+      if [[ -z "${SQRT_POS_WEIGHT}" ]]; then
         IFS=',' read -r SQRT_NEG SQRT_POS SQRT_RATIO SQRT_POS_WEIGHT < <(compute_sqrt_pos_weight)
       fi
       pos_weight_desc="${SQRT_POS_WEIGHT} (sqrt neg/pos; neg=${SQRT_NEG}, pos=${SQRT_POS}, neg/pos=${SQRT_RATIO})"
@@ -412,16 +417,73 @@ for mode in "${POS_WEIGHT_MODES[@]}"; do
   echo "Experiment name          : ${exp_name}"
   echo "Resolved pos_weight      : ${pos_weight_desc}"
   echo "BALANCE_TRAINING         : ${BALANCE_TRAINING}"
+  echo "CUDA_VISIBLE_DEVICES     : ${mode_gpu_id}"
   echo "Output dir               : ${mode_output_dir}"
   echo "------------------------------------------------------------"
 
-  build_and_run_command "${mode}" "${mode_output_dir}" "${exp_name}" "${pos_weight_flag[@]}"
+  build_and_run_command "${mode}" "${mode_output_dir}" "${exp_name}" "${mode_gpu_id}" "${pos_weight_flag[@]}"
 
   if [[ "${DRY_RUN}" != "1" ]]; then
     check_required_outputs "${mode_output_dir}"
     echo "[OK] Required outputs found for mode=${mode}"
   fi
-done
+}
+
+if [[ "${RUN_IN_PARALLEL}" == "1" && "${DRY_RUN}" != "1" ]]; then
+  if [[ "${#GPU_IDS[@]}" -lt "${#POS_WEIGHT_MODES[@]}" ]]; then
+    echo "[ERROR] RUN_IN_PARALLEL=1 needs at least one GPU id per mode."
+    echo "        POS_WEIGHT_MODES=${POS_WEIGHT_MODES[*]}"
+    echo "        GPU_IDS=${GPU_IDS[*]}"
+    exit 1
+  fi
+
+  pids=()
+  pid_modes=()
+  pid_logs=()
+
+  for idx in "${!POS_WEIGHT_MODES[@]}"; do
+    mode="${POS_WEIGHT_MODES[$idx]}"
+    mode_gpu_id="${GPU_IDS[$idx]}"
+    mode_output_dir="${SWEEP_OUTPUT_DIR}/${mode}"
+    mkdir -p "${mode_output_dir}"
+    shell_log="${mode_output_dir}/round1_${mode}.log"
+
+    echo ""
+    echo "[LAUNCH] mode=${mode} gpu=${mode_gpu_id} log=${shell_log}"
+    (
+      run_mode "${mode}" "${mode_gpu_id}"
+    ) > "${shell_log}" 2>&1 &
+
+    pids+=("$!")
+    pid_modes+=("${mode}")
+    pid_logs+=("${shell_log}")
+  done
+
+  failed=0
+  for idx in "${!pids[@]}"; do
+    pid="${pids[$idx]}"
+    mode="${pid_modes[$idx]}"
+    shell_log="${pid_logs[$idx]}"
+    if wait "${pid}"; then
+      echo "[OK] mode=${mode} finished. Log: ${shell_log}"
+    else
+      status="$?"
+      echo "[ERROR] mode=${mode} failed with exit code ${status}. Log: ${shell_log}"
+      failed=1
+    fi
+  done
+
+  if [[ "${failed}" != "0" ]]; then
+    echo "[ERROR] One or more round-1 experiments failed."
+    exit 1
+  fi
+else
+  for idx in "${!POS_WEIGHT_MODES[@]}"; do
+    mode="${POS_WEIGHT_MODES[$idx]}"
+    mode_gpu_id="${GPU_IDS[$idx]:-${GPU_ID}}"
+    run_mode "${mode}" "${mode_gpu_id}"
+  done
+fi
 
 echo ""
 echo "Round-1 pos_weight sweep done."
