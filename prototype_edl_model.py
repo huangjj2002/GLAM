@@ -75,6 +75,7 @@ class PrototypeEDLModel(EDLModel):
         prototype_init_max_samples_per_class: int = 0,
         prototype_init_batch_size: int = 0,
         prototype_init_num_workers: int = 0,
+        prototype_init_print_interval: int = 20,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -92,6 +93,7 @@ class PrototypeEDLModel(EDLModel):
         self.prototype_init_max_samples_per_class = int(prototype_init_max_samples_per_class or 0)
         self.prototype_init_batch_size = int(prototype_init_batch_size or 0)
         self.prototype_init_num_workers = int(prototype_init_num_workers or 0)
+        self.prototype_init_print_interval = max(1, int(prototype_init_print_interval or 20))
 
         self.hparams["edl_proto_k"] = int(edl_proto_k)
         self.hparams["edl_proto_topk"] = int(edl_proto_topk)
@@ -103,6 +105,7 @@ class PrototypeEDLModel(EDLModel):
         )
         self.hparams["prototype_init_batch_size"] = int(prototype_init_batch_size or 0)
         self.hparams["prototype_init_num_workers"] = int(prototype_init_num_workers or 0)
+        self.hparams["prototype_init_print_interval"] = int(prototype_init_print_interval or 20)
 
         if getattr(self.hparams, "freeze_backbone", False):
             self._freeze_backbone_for_edl()
@@ -198,7 +201,25 @@ class PrototypeEDLModel(EDLModel):
 
         embeddings = []
         labels = []
-        for batch in dataloader:
+        total_batches = len(dataloader) if hasattr(dataloader, "__len__") else None
+        print_interval = self.prototype_init_print_interval
+        iterator = dataloader
+        use_tqdm = False
+        try:
+            from tqdm.auto import tqdm
+
+            iterator = tqdm(
+                dataloader,
+                total=total_batches,
+                desc="Prototype init",
+                unit="batch",
+                leave=True,
+            )
+            use_tqdm = True
+        except Exception as exc:
+            print(f"### [PrototypeEDL][Warning] tqdm unavailable, using text progress: {exc}")
+
+        for batch_idx, batch in enumerate(iterator):
             images = batch["imgs"].to(device, non_blocking=True)
             batch_labels = batch["multi_hot_label"]
             if batch_labels.shape[-1] == 1:
@@ -211,6 +232,22 @@ class PrototypeEDLModel(EDLModel):
                 features = F.normalize(features, dim=-1)
             embeddings.append(features.detach().float().cpu().numpy())
             labels.append(batch_targets.detach().cpu().numpy())
+
+            current = batch_idx + 1
+            seen = sum(len(x) for x in labels)
+            if use_tqdm:
+                iterator.set_postfix(embeddings=seen)
+            else:
+                should_print = current == 1 or current % print_interval == 0
+                if total_batches is not None:
+                    should_print = should_print or current == total_batches
+                if should_print:
+                    total_text = total_batches if total_batches is not None else "?"
+                    print(
+                        "### [PrototypeEDL] Prototype init progress: "
+                        f"batch {current}/{total_text}, embeddings={seen}",
+                        flush=True,
+                    )
 
         if was_training:
             self.train()

@@ -460,6 +460,12 @@ def parse_args():
         default=0,
         help="Workers for prototype init embedding extraction. 0 reuses --num_workers.",
     )
+    parser.add_argument(
+        "--prototype_init_print_interval",
+        type=int,
+        default=20,
+        help="Print prototype initialization progress every N batches.",
+    )
 
     parser.add_argument("--k_fold", type=int, default=5)
     parser.add_argument("--folds_to_run", type=str, default=None)

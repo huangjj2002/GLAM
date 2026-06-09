@@ -148,6 +148,8 @@ PROTOTYPE_INIT_BATCH_SIZE=0
 # 抽 embedding 初始化 prototype 的 batch size；0=复用 BATCH_SIZE
 PROTOTYPE_INIT_NUM_WORKERS=0
 # 抽 embedding 初始化 prototype 的 worker 数；0=复用 NUM_WORKERS
+PROTOTYPE_INIT_PRINT_INTERVAL=20
+# prototype 初始化阶段每隔多少个 batch 打印一次进度
 
 # ---------------------------------------------------------------------------
 # 派生配置：一般不需要修改
@@ -247,6 +249,7 @@ echo "PROTOTYPE_TEMPERATURE            : ${PROTOTYPE_TEMPERATURE}"
 echo "PROTOTYPE_INIT                   : ${PROTOTYPE_INIT}"
 echo "PROTOTYPE_NORMALIZE              : ${PROTOTYPE_NORMALIZE}"
 echo "PROTOTYPE_INIT_MAX_SAMPLES_CLASS : ${PROTOTYPE_INIT_MAX_SAMPLES_PER_CLASS}"
+echo "PROTOTYPE_INIT_PRINT_INTERVAL    : ${PROTOTYPE_INIT_PRINT_INTERVAL}"
 echo "RUN_OUTPUT_DIR                   : ${RUN_OUTPUT_DIR}"
 
 if [[ ! -f "${CSV_PATH}" ]]; then
@@ -307,6 +310,7 @@ echo "=============================="
   --prototype_init_max_samples_per_class "${PROTOTYPE_INIT_MAX_SAMPLES_PER_CLASS}" \
   --prototype_init_batch_size "${PROTOTYPE_INIT_BATCH_SIZE}" \
   --prototype_init_num_workers "${PROTOTYPE_INIT_NUM_WORKERS}" \
+  --prototype_init_print_interval "${PROTOTYPE_INIT_PRINT_INTERVAL}" \
   --k_fold "${NUM_FOLDS}" \
   "${FOLDS_TO_RUN_FLAG[@]}" \
   --max_epochs "${MAX_EPOCHS}" \
