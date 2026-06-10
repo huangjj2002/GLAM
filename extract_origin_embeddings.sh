@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-GPU_ID=1
+GPU_ID=7
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "${ROOT_DIR}"
