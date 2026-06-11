@@ -1,7 +1,7 @@
 ﻿#!/bin/bash
 set -euo pipefail
 
-GPU_ID=1
+GPU_ID=2
 #指定GPU
 MAX_EPOCHS=25
 #指定每一折训练的epoch
@@ -23,11 +23,11 @@ TRAIN_LOG_TO_FILE=0
 # 早停策略配置
 EARLY_STOP=1
 #是否启用早停（1=启用，0=禁用）
-EARLY_STOP_PATIENCE=3
+EARLY_STOP_PATIENCE=4
 #早停耐心轮数，即验证指标连续多少个epoch没有改善后停止训练
 EARLY_STOP_MIN_EPOCHS=0
 #早停最小训练epoch数；原模型默认不强制，EDL脚本默认会设置更高
-MONITOR_METRIC="val_AUROC"
+MONITOR_METRIC="val_loss"
 #checkpoint与早停监控指标
 BALANCE_TRAINING=0
 #是否启用训练集重采样（1=启用，0=禁用），默认与run_edl.sh保持一致
@@ -67,7 +67,7 @@ VAL_MIN_POSITIVE_PATIENTS=3
 VAL_RANDOM_STATE=42
 
 PRETRAINED_ENCODER="$(cd "$(dirname "$0")" && pwd)/pretrain_model/last.ckpt"
-NUM_FOLDS=0
+NUM_FOLDS=5
 BASE_EXP_NAME="glam_kfold_ft"
 
 PRED_THRESHOLD=0.5
